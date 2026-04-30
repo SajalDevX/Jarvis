@@ -8,7 +8,6 @@ from cache.intent_cache import IntentCache
 from logger import log
 
 
-# Replies cached as full text — only for deterministic phrases that never change.
 CACHEABLE_REPLY_AGENTS = {"chat_agent"}
 
 # Short user replies that almost certainly continue the previous agent's flow.
@@ -21,19 +20,23 @@ _FOLLOWUP_PATTERNS = re.compile(
 
 
 def _is_followup(text: str) -> bool:
-    """Heuristic: short reply likely continues prior agent (yes/no/pick a number)."""
     stripped = text.strip().rstrip(".!?").lower()
-    if len(stripped) <= 25 and _FOLLOWUP_PATTERNS.match(stripped):
-        return True
-    return False
+    return bool(len(stripped) <= 25 and _FOLLOWUP_PATTERNS.match(stripped))
+
+
+# Soft cap on history size — beyond this, oldest entries trimmed (keep system + recent)
+MAX_HISTORY_MESSAGES = 40
 
 
 class Orchestrator:
-    """Cache → (sticky / router) → Agent pipeline.
+    """Owns the shared conversation log. Picks an agent per turn.
 
-    Sticky routing: if last turn used an agent and current input looks like a
-    follow-up ('yes', 'pick the second one'), keep using that agent so it
-    retains the prior conversation context.
+    Flow:
+      0. Sticky: short follow-up ('yes') → reuse previous agent
+      1. Cache: exact-match → instant route (and maybe instant reply)
+      2. Router: nano model classifies → agent + tier
+      3. Filter history for the chosen agent (full if same agent, narrative-only if switching)
+      4. Run agent → append produced messages back to shared history
     """
 
     def __init__(self):
@@ -43,6 +46,9 @@ class Orchestrator:
         self._last_tier: str = "fast"
         self.router = RouterAgent()
         self.cache = IntentCache()
+        # Shared message log (no system prompts). Each msg has role + content.
+        # Tool messages have a "_agent" tag added so we know which agent owns them.
+        self.history: list[dict] = []
         self._register_defaults()
 
     def _register_defaults(self):
@@ -55,44 +61,101 @@ class Orchestrator:
             self._default = agent
         log.info(f"Registered agent: {agent.name} (tier={agent.tier})")
 
+    def reset(self):
+        """Clear shared conversation history."""
+        self.history = []
+        self._last_agent = None
+        log.info("Orchestrator history cleared")
+
+    def _filter_history_for(self, target_agent: Agent) -> list[dict]:
+        """When the target agent is the same as last, pass full history.
+        When switching agents, strip tool calls/results so the new agent doesn't
+        see tools it doesn't have — keep narrative content only.
+        """
+        if self._last_agent and target_agent.name == self._last_agent.name:
+            return self._strip_meta(self.history)
+
+        # Cross-agent: keep user/assistant TEXT only
+        narrative: list[dict] = []
+        for m in self.history:
+            role = m.get("role")
+            if role == "tool":
+                continue
+            if role == "assistant":
+                # Strip tool_calls but keep textual content
+                content = m.get("content") or ""
+                if content:
+                    narrative.append({"role": "assistant", "content": content})
+                continue
+            if role == "user":
+                narrative.append({"role": "user", "content": m.get("content", "")})
+        return narrative
+
+    @staticmethod
+    def _strip_meta(messages: list[dict]) -> list[dict]:
+        """Remove non-API fields (like _agent) before sending to the LLM."""
+        out = []
+        for m in messages:
+            cleaned = {k: v for k, v in m.items() if not k.startswith("_")}
+            out.append(cleaned)
+        return out
+
+    def _trim_history(self):
+        """Keep history bounded. Drop oldest beyond MAX_HISTORY_MESSAGES."""
+        if len(self.history) > MAX_HISTORY_MESSAGES:
+            drop = len(self.history) - MAX_HISTORY_MESSAGES
+            log.debug(f"Trimming {drop} oldest history entries")
+            self.history = self.history[drop:]
+
     def handle(self, user_input: str, on_tool_call=None) -> tuple[str, str]:
-        """Returns (agent_name, reply)."""
-        # 0. Sticky: short follow-up → reuse previous agent (skip router + cache)
+        # 0. Sticky: short follow-up reuses prior agent
         if self._last_agent and _is_followup(user_input):
             log.info(f"Sticky route → {self._last_agent.name} (followup)")
             agent = self._last_agent
             tier = self._last_tier
-            reply = agent.run(user_input, on_tool_call=on_tool_call, tier_override=tier)
-            return agent.name, reply
-
-        # 1. Cache check
-        cached = self.cache.get(user_input)
-        if cached:
-            agent_name = cached.agent
-            tier = cached.tier
-            if cached.reply:
-                log.info(f"Cache hit (full): {agent_name}/{tier}")
-                self._last_agent = self.agents.get(agent_name) or self._default
-                self._last_tier = tier
-                return agent_name, cached.reply
-            log.info(f"Cache hit (route only): {agent_name}/{tier}")
         else:
-            # 2. Router classifies
-            agent_name, tier = self.router.classify(user_input)
+            # 1. Cache check
+            cached = self.cache.get(user_input)
+            if cached:
+                agent_name = cached.agent
+                tier = cached.tier
+                if cached.reply:
+                    log.info(f"Cache hit (full): {agent_name}/{tier}")
+                    self._last_agent = self.agents.get(agent_name) or self._default
+                    self._last_tier = tier
+                    # Add to history so future agents have context
+                    self.history.append({"role": "user", "content": user_input})
+                    self.history.append({"role": "assistant", "content": cached.reply})
+                    self._trim_history()
+                    return agent_name, cached.reply
+                log.info(f"Cache hit (route only): {agent_name}/{tier}")
+            else:
+                # 2. Router classifies
+                agent_name, tier = self.router.classify(user_input)
 
-        # 3. Pick agent (fall back to default if unknown)
-        agent = self.agents.get(agent_name) or self._default
-        actual_name = agent.name
+            agent = self.agents.get(agent_name) or self._default
 
-        # 4. Run agent with router-suggested tier override
-        reply = agent.run(user_input, on_tool_call=on_tool_call, tier_override=tier)
+        # 3. Filter shared history for this agent
+        history_view = self._filter_history_for(agent)
 
-        # 5. Remember for sticky routing
+        # 4. Run agent — get reply + new messages it produced this turn
+        reply, new_turn = agent.run(
+            user_input,
+            history=history_view,
+            on_tool_call=on_tool_call,
+            tier_override=tier,
+        )
+
+        # 5. Tag each new message with owning agent and append to shared history
+        for m in new_turn:
+            m.setdefault("_agent", agent.name)
+        self.history.extend(new_turn)
+        self._trim_history()
+
+        # 6. Update sticky state + cache
         self._last_agent = agent
         self._last_tier = tier
+        cache_reply = reply if agent.name in CACHEABLE_REPLY_AGENTS and reply else None
+        self.cache.put(user_input, agent.name, tier, cache_reply)
 
-        # 6. Cache result
-        cache_reply = reply if actual_name in CACHEABLE_REPLY_AGENTS and reply else None
-        self.cache.put(user_input, actual_name, tier, cache_reply)
-
-        return actual_name, reply
+        return agent.name, reply

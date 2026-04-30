@@ -55,8 +55,7 @@ def main():
             continue
 
         if user_input == "/reset":
-            for agent in orchestrator.agents.values():
-                agent.reset()
+            orchestrator.reset()
             console.print("[dim]History cleared.[/dim]")
             continue
 
