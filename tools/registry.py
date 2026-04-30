@@ -1,59 +1,34 @@
-from tools.apps import open_app, close_app, run_command
+from typing import Iterable
 
-TOOL_DEFINITIONS = [
-    {
-        "type": "function",
-        "function": {
-            "name": "open_app",
-            "description": "Open a desktop application by name (e.g. firefox, vlc, nautilus)",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "app_name": {"type": "string", "description": "App name or command to launch"}
-                },
-                "required": ["app_name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "close_app",
-            "description": "Close/kill a running desktop application by name",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "app_name": {"type": "string", "description": "App name to kill"}
-                },
-                "required": ["app_name"],
-            },
-        },
-    },
-    {
-        "type": "function",
-        "function": {
-            "name": "run_command",
-            "description": "Run a shell command and return its output",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "command": {"type": "string", "description": "Shell command to execute"}
-                },
-                "required": ["command"],
-            },
-        },
-    },
-]
-
-_DISPATCH = {
-    "open_app": open_app,
-    "close_app": close_app,
-    "run_command": run_command,
-}
+from tools.base import Tool
+from tools.apps import OpenAppTool, CloseAppTool, SearchAppTool, RunCommandTool
 
 
-def dispatch(tool_name: str, args: dict) -> str:
-    fn = _DISPATCH.get(tool_name)
-    if fn is None:
-        return f"Unknown tool: {tool_name}"
-    return fn(**args)
+class ToolRegistry:
+    """Holds tool instances. Agents subscribe to a subset by name."""
+
+    def __init__(self, tools: Iterable[Tool]):
+        self._tools: dict[str, Tool] = {t.name: t for t in tools}
+
+    def get(self, name: str) -> Tool | None:
+        return self._tools.get(name)
+
+    def schemas(self, names: Iterable[str] | None = None) -> list[dict]:
+        if names is None:
+            return [t.to_schema() for t in self._tools.values()]
+        return [self._tools[n].to_schema() for n in names if n in self._tools]
+
+    def dispatch(self, name: str, args: dict) -> str:
+        tool = self._tools.get(name)
+        if tool is None:
+            return f"Unknown tool: {name}"
+        return tool.execute(**args)
+
+
+# Global registry — register all tools here as project grows
+REGISTRY = ToolRegistry([
+    OpenAppTool(),
+    CloseAppTool(),
+    SearchAppTool(),
+    RunCommandTool(),
+])

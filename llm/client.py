@@ -3,7 +3,6 @@ import socket
 import urllib.request
 import urllib.error
 
-from tools.registry import TOOL_DEFINITIONS
 from logger import log
 
 
@@ -11,37 +10,40 @@ def is_online() -> bool:
     try:
         socket.setdefaulttimeout(2)
         socket.create_connection(("8.8.8.8", 53))
-        log.debug("Network check: online")
         return True
     except OSError:
-        log.debug("Network check: offline")
         return False
 
 
-def chat(messages: list) -> tuple[str, list, dict]:
+def chat(messages: list, tools: list | None = None) -> tuple[str, list, dict]:
+    """Send messages to the active LLM. Returns (reply_text, tool_calls, raw_msg).
+
+    Routes to OpenRouter when online, Ollama when offline.
+    """
     if is_online():
-        log.debug("Routing to OpenRouter")
-        return _chat_openrouter(messages)
-    log.debug("Routing to Ollama (offline)")
-    return _chat_ollama(messages)
+        log.debug("LLM route: OpenRouter")
+        return _chat_openrouter(messages, tools or [])
+    log.debug("LLM route: Ollama")
+    return _chat_ollama(messages, tools or [])
 
 
-def _chat_openrouter(messages: list) -> tuple[str, list, dict]:
+def _chat_openrouter(messages: list, tools: list) -> tuple[str, list, dict]:
     from config import OPENROUTER_API_KEY, OPENROUTER_MODEL, OPENROUTER_URL
 
-    log.debug(f"OpenRouter request: model={OPENROUTER_MODEL}, messages={len(messages)}")
+    log.debug(f"OpenRouter req: model={OPENROUTER_MODEL}, msgs={len(messages)}, tools={len(tools)}")
 
-    payload = json.dumps({
+    body = {
         "model": OPENROUTER_MODEL,
         "messages": messages,
-        "tools": TOOL_DEFINITIONS,
         "stream": False,
         "max_tokens": 1024,
-    }).encode()
+    }
+    if tools:
+        body["tools"] = tools
 
     req = urllib.request.Request(
         OPENROUTER_URL,
-        data=payload,
+        data=json.dumps(body).encode(),
         headers={
             "Content-Type": "application/json",
             "Authorization": f"Bearer {OPENROUTER_API_KEY}",
@@ -54,22 +56,19 @@ def _chat_openrouter(messages: list) -> tuple[str, list, dict]:
         with urllib.request.urlopen(req, timeout=120) as resp:
             data = json.loads(resp.read())
     except urllib.error.HTTPError as e:
-        body = e.read().decode()
-        log.error(f"OpenRouter HTTP {e.code}: {body}")
-        raise ConnectionError(f"OpenRouter {e.code}: {body}") from e
+        body_err = e.read().decode()
+        log.error(f"OpenRouter HTTP {e.code}: {body_err}")
+        raise ConnectionError(f"OpenRouter {e.code}: {body_err}") from e
     except urllib.error.URLError as e:
         log.error(f"OpenRouter URL error: {e}")
         raise ConnectionError(f"OpenRouter error: {e}") from e
 
     choice = data.get("choices", [{}])[0]
-    finish_reason = choice.get("finish_reason")
     msg = choice.get("message", {})
     reply = msg.get("content") or msg.get("reasoning_content") or msg.get("reasoning") or ""
-    tool_calls_raw = msg.get("tool_calls") or []
+    raw_tool_calls = msg.get("tool_calls") or []
 
-    log.debug(f"OpenRouter response: finish_reason={finish_reason}, content_len={len(reply)}, tool_calls={len(tool_calls_raw)}")
-    if tool_calls_raw:
-        log.debug(f"Tool calls: {[tc['function']['name'] for tc in tool_calls_raw]}")
+    log.debug(f"OpenRouter resp: content_len={len(reply)}, tools={len(raw_tool_calls)}")
 
     tool_calls = [
         {
@@ -77,29 +76,30 @@ def _chat_openrouter(messages: list) -> tuple[str, list, dict]:
             "function": {
                 "name": tc["function"]["name"],
                 "arguments": tc["function"]["arguments"],
-            }
+            },
         }
-        for tc in tool_calls_raw
+        for tc in raw_tool_calls
     ]
 
     return reply.strip(), tool_calls, msg
 
 
-def _chat_ollama(messages: list) -> tuple[str, list, dict]:
+def _chat_ollama(messages: list, tools: list) -> tuple[str, list, dict]:
     from config import MODEL, OLLAMA_URL
 
-    log.debug(f"Ollama request: model={MODEL}, messages={len(messages)}")
+    log.debug(f"Ollama req: model={MODEL}, msgs={len(messages)}, tools={len(tools)}")
 
-    payload = json.dumps({
+    body = {
         "model": MODEL,
         "messages": messages,
-        "tools": TOOL_DEFINITIONS,
         "stream": False,
-    }).encode()
+    }
+    if tools:
+        body["tools"] = tools
 
     req = urllib.request.Request(
         OLLAMA_URL,
-        data=payload,
+        data=json.dumps(body).encode(),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
@@ -115,6 +115,6 @@ def _chat_ollama(messages: list) -> tuple[str, list, dict]:
     reply = msg.get("content") or ""
     tool_calls = msg.get("tool_calls") or []
 
-    log.debug(f"Ollama response: content_len={len(reply)}, tool_calls={len(tool_calls)}")
+    log.debug(f"Ollama resp: content_len={len(reply)}, tools={len(tool_calls)}")
 
     return reply.strip(), tool_calls, msg
