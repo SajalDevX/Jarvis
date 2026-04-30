@@ -56,8 +56,8 @@ class Orchestrator:
         self._register_defaults()
 
     def _register_defaults(self):
-        self.register(AppAgent(), default=True)
-        self.register(ChatAgent())
+        self.register(ChatAgent(), default=True)
+        self.register(AppAgent())
         self.register(VisionAgent())
 
     def register(self, agent: Agent, default: bool = False):
