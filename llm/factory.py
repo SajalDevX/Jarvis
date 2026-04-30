@@ -32,8 +32,6 @@ def build_llm() -> BaseChatModel:
             api_key=OPENROUTER_API_KEY,
             base_url=OPENROUTER_URL_BASE,
             max_tokens=1024,
-            timeout=30,
-            max_retries=0,
             default_headers={"HTTP-Referer": "jarvis-cli"},
         )
 
