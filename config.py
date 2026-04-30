@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-# Load .env manually
+# Load .env manually (no dotenv dep)
 _env_path = Path(__file__).parent / ".env"
 if _env_path.exists():
     for line in _env_path.read_text().splitlines():
@@ -12,9 +12,20 @@ if _env_path.exists():
 
 # Offline (Ollama)
 MODEL = os.environ.get("JARVIS_MODEL", "qwen3.5:4b")
-OLLAMA_BASE_URL = os.environ.get("JARVIS_OLLAMA_BASE_URL", "http://localhost:11434")
+OLLAMA_URL = os.environ.get("JARVIS_OLLAMA_URL", "http://localhost:11434/api/chat")
 
 # Online (OpenRouter — OpenAI-compatible)
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
-OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "google/gemini-2.5-flash")
-OPENROUTER_URL_BASE = "https://openrouter.ai/api/v1"
+OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "qwen/qwen3.5")
+OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+SYSTEM_PROMPT = (
+    "You are Jarvis, a desktop assistant running on Linux. "
+    "When the user asks to open an application, follow these steps WITHOUT asking permission first:\n"
+    "1. Immediately call search_app with the app name the user mentioned.\n"
+    "2. If not found, call search_app again with a related category (e.g. user says 'notepad' → search 'text editor').\n"
+    "3. If a match is found, tell the user: 'I found [name] which is similar to [what they asked] — should I open it?' then wait.\n"
+    "4. If user says yes, call open_app with the exact command from search results.\n"
+    "5. If nothing found at all, tell the user it's not installed.\n"
+    "When closing apps or running commands, act directly. Be concise."
+)
