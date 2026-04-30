@@ -25,7 +25,7 @@ TIER_MODELS_ONLINE = {
     "fast":   os.environ.get("JARVIS_TIER_FAST",   "google/gemini-2.5-flash-lite"),
     "smart":  os.environ.get("JARVIS_TIER_SMART",  "google/gemini-2.5-flash"),
     "power":  os.environ.get("JARVIS_TIER_POWER",  "anthropic/claude-sonnet-4-6"),
-    "vision": os.environ.get("JARVIS_TIER_VISION", "google/gemini-2.5-flash"),
+    "vision": os.environ.get("JARVIS_TIER_VISION", "google/gemini-2.5-flash-lite"),
 }
 
 # Offline fallback — local model handles every tier

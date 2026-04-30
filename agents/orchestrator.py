@@ -32,6 +32,29 @@ def _is_followup(text: str) -> bool:
 MAX_HISTORY_MESSAGES = 40
 
 
+# Fast-classifier patterns: skip router LLM (~1s saved) for obvious intents.
+_VISION_RE = re.compile(
+    r"\b(screen|screenshot|ocr|describe my|what's on (my )?screen|"
+    r"what is on (my )?screen|what does (it|the screen|my screen) say|"
+    r"where is (the |a |an )|find (the |a |an ))",
+    re.IGNORECASE,
+)
+_APP_RE = re.compile(
+    r"^(open|close|launch|quit|kill|start|terminate)\s+",
+    re.IGNORECASE,
+)
+
+
+def _quick_classify(text: str) -> tuple[str, str] | None:
+    """Pattern-only routing for unambiguous intents. None means 'use the LLM router'."""
+    t = text.strip()
+    if _VISION_RE.search(t):
+        return "vision_agent", "vision"
+    if _APP_RE.match(t):
+        return "app_agent", "fast"
+    return None
+
+
 class Orchestrator:
     """Owns the shared conversation log. Picks an agent per turn.
 
@@ -171,8 +194,14 @@ class Orchestrator:
                     return agent_name, cached.reply
                 log.info(f"Cache hit (route only): {agent_name}/{tier}")
             else:
-                # 2. Router classifies
-                agent_name, tier = self.router.classify(user_input)
+                # 1.5 Quick pattern classify (skip router LLM if obvious)
+                quick = _quick_classify(user_input)
+                if quick:
+                    agent_name, tier = quick
+                    log.info(f"Quick classify → {agent_name}/{tier}")
+                else:
+                    # 2. Router classifies via LLM
+                    agent_name, tier = self.router.classify(user_input)
 
             agent = self.agents.get(agent_name) or self._default
 

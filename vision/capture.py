@@ -85,7 +85,7 @@ def capture_active_window() -> Path:
     return out
 
 
-def downscale_for_llm(path: Path, max_width: int = 1024, jpeg_quality: int = 75) -> bytes:
+def downscale_for_llm(path: Path, max_width: int = 768, jpeg_quality: int = 65) -> bytes:
     """Resize + JPEG-encode an image for cheap multimodal upload.
 
     Cuts payload ~5x vs raw PNG. Returns the encoded bytes (caller base64s for API).
