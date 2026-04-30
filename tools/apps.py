@@ -21,6 +21,91 @@ ALIASES = {
     "photos": "eog",
 }
 
+# Synonyms: when user says LHS, also search RHS terms
+SYNONYMS = {
+    "notepad": ["text editor", "editor"],
+    "wordpad": ["text editor", "office", "writer"],
+    "word": ["office", "writer", "document"],
+    "excel": ["spreadsheet", "office", "calc"],
+    "powerpoint": ["presentation", "office", "impress"],
+    "paint": ["image editor", "drawing", "graphics"],
+    "photoshop": ["image editor", "graphics", "gimp"],
+    "explorer": ["file manager", "files"],
+    "finder": ["file manager", "files"],
+    "cmd": ["terminal", "shell"],
+    "powershell": ["terminal", "shell"],
+    "edge": ["browser", "web"],
+    "safari": ["browser", "web"],
+    "outlook": ["email", "mail"],
+    "thunderbird": ["email", "mail"],
+    "spotify": ["music", "audio player"],
+    "vlc": ["video", "media player"],
+    "movie": ["video", "media player"],
+    "photos": ["image viewer", "gallery"],
+    "camera": ["webcam", "cheese"],
+    "zoom": ["video conference", "meeting"],
+    "discord": ["chat", "messaging"],
+    "telegram": ["chat", "messaging"],
+    "whatsapp": ["chat", "messaging"],
+}
+
+# Cached app index — built once on first search, reused for the session
+_APP_INDEX: list[dict] | None = None
+
+
+def _build_app_index() -> list[dict]:
+    """Parse all .desktop files once. Includes system, user, snap, flatpak."""
+    paths: list[str] = []
+    for d in [
+        "/usr/share/applications",
+        "/usr/local/share/applications",
+        "/var/lib/snapd/desktop/applications",
+        "/var/lib/flatpak/exports/share/applications",
+        f"{__import__('os').path.expanduser('~')}/.local/share/applications",
+    ]:
+        paths.extend(glob.glob(f"{d}/*.desktop"))
+
+    apps = []
+    for path in paths:
+        cp = configparser.ConfigParser(interpolation=None)
+        try:
+            cp.read(path)
+        except Exception:
+            continue
+        if not cp.has_section("Desktop Entry"):
+            continue
+
+        name = cp.get("Desktop Entry", "Name", fallback="")
+        exec_cmd = cp.get("Desktop Entry", "Exec", fallback="")
+        no_display = cp.get("Desktop Entry", "NoDisplay", fallback="false").lower()
+        if no_display == "true" or not exec_cmd:
+            continue
+
+        exec_clean = exec_cmd.split()[0].split("/")[-1]
+        for token in ["%f", "%u", "%F", "%U", "%i", "%c", "%k"]:
+            exec_clean = exec_clean.replace(token, "")
+        exec_clean = exec_clean.strip()
+
+        haystack = " ".join([
+            name,
+            cp.get("Desktop Entry", "GenericName", fallback=""),
+            cp.get("Desktop Entry", "Categories", fallback=""),
+            cp.get("Desktop Entry", "Comment", fallback=""),
+            cp.get("Desktop Entry", "Keywords", fallback=""),
+        ]).lower()
+
+        apps.append({"name": name, "exec": exec_clean, "haystack": haystack})
+
+    log.info(f"App index built: {len(apps)} apps")
+    return apps
+
+
+def _get_index() -> list[dict]:
+    global _APP_INDEX
+    if _APP_INDEX is None:
+        _APP_INDEX = _build_app_index()
+    return _APP_INDEX
+
 
 class OpenAppTool(Tool):
     name = "open_app"
@@ -93,54 +178,47 @@ class CloseAppTool(Tool):
 
 class SearchAppTool(Tool):
     name = "search_app"
-    description = "Search for installed desktop apps matching a name or category. Always call this BEFORE open_app when unsure if an app exists. Searches names, categories, and descriptions of all installed apps."
+    description = (
+        "Search installed desktop apps by name, category, or keyword. "
+        "Returns matches from cached index across system, user, snap, and flatpak apps. "
+        "Automatically expands common synonyms (e.g. 'notepad' also searches 'text editor'). "
+        "Call this ONCE before open_app — no need to retry with different terms."
+    )
     parameters = {
         "type": "object",
         "properties": {
-            "query": {"type": "string", "description": "App name, category, or keyword (e.g. 'notepad', 'text editor', 'browser', 'image viewer')"}
+            "query": {"type": "string", "description": "App name, category, or keyword (e.g. 'notepad', 'browser', 'image viewer')"}
         },
         "required": ["query"],
     }
 
     def execute(self, query: str) -> str:
-        log.debug(f"search_app: '{query}'")
-        q = query.lower()
+        q = query.lower().strip()
+        log.debug(f"search_app: '{q}'")
+
+        # Build query set: original + synonyms
+        queries = {q}
+        queries.update(SYNONYMS.get(q, []))
+
+        index = _get_index()
+        seen = set()
         matches = []
 
-        for path in glob.glob("/usr/share/applications/*.desktop"):
-            cp = configparser.ConfigParser(interpolation=None)
-            try:
-                cp.read(path)
-            except Exception:
-                continue
-            if not cp.has_section("Desktop Entry"):
-                continue
-
-            name = cp.get("Desktop Entry", "Name", fallback="")
-            exec_cmd = cp.get("Desktop Entry", "Exec", fallback="")
-            generic = cp.get("Desktop Entry", "GenericName", fallback="")
-            categories = cp.get("Desktop Entry", "Categories", fallback="")
-            comment = cp.get("Desktop Entry", "Comment", fallback="")
-            no_display = cp.get("Desktop Entry", "NoDisplay", fallback="false").lower()
-
-            if no_display == "true" or not exec_cmd:
-                continue
-
-            exec_clean = exec_cmd.split()[0].split("/")[-1]
-            for token in ["%f", "%u", "%F", "%U", "%i", "%c", "%k"]:
-                exec_clean = exec_clean.replace(token, "")
-            exec_clean = exec_clean.strip()
-
-            haystack = f"{name} {generic} {categories} {comment}".lower()
-            if q in haystack:
-                matches.append(f"{name} → {exec_clean}")
+        for term in queries:
+            for app in index:
+                if term in app["haystack"]:
+                    key = (app["name"], app["exec"])
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    matches.append(f"{app['name']} → {app['exec']}")
 
         if not matches:
-            log.info(f"search_app no results for '{query}'")
+            log.info(f"search_app no results for '{q}' (tried {queries})")
             return f"No installed apps found matching '{query}'"
 
-        log.info(f"search_app: {len(matches)} results")
-        return "Installed apps matching:\n" + "\n".join(matches[:8])
+        log.info(f"search_app: {len(matches)} results for '{q}'")
+        return "Installed apps matching:\n" + "\n".join(matches[:10])
 
 
 class RunCommandTool(Tool):
