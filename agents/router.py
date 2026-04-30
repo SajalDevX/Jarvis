@@ -14,16 +14,19 @@ from logger import log
 ROUTER_PROMPT = """You are an intent classifier. Output STRICT JSON only — no markdown, no explanation.
 
 Schema:
-{"agent": "app|system|chat", "tier": "nano|fast|smart|power"}
+{"agent": "app|vision|system|chat", "tier": "nano|fast|smart|power|vision"}
 
 Agents:
-- "app": user wants to open, close, launch, quit, or list desktop applications
-- "system": run a shell command, check system info, manage files
-- "chat": small talk, greetings, simple Q&A, anything not above
+- "app": open, close, launch, quit, list desktop applications
+- "vision": questions about the screen, screenshot, OCR, "what's shown", "is it loaded",
+  "what does it say", "what error", "describe my screen", "find the X button"
+- "system": shell command, system info, file ops
+- "chat": small talk, greetings, simple Q&A not requiring tools
 
 Tiers:
-- "nano": trivial reply ("hi", "thanks") — chat agent
-- "fast": single-step action (open/close app, simple command) — most cases
+- "nano": trivial reply ("hi", "thanks") — usually chat agent
+- "fast": single-step action (open/close app) — most app cases
+- "vision": any vision_agent task — required when agent=vision
 - "smart": multi-step planning, analysis, summarization
 - "power": code generation, complex reasoning, hard debugging
 
@@ -67,12 +70,21 @@ class RouterAgent(Agent):
         tier = data.get("tier", "fast").lower()
 
         # Map short names → full agent names
-        agent_map = {"app": "app_agent", "system": "app_agent", "chat": "chat_agent"}
+        agent_map = {
+            "app": "app_agent",
+            "system": "app_agent",
+            "chat": "chat_agent",
+            "vision": "vision_agent",
+        }
         agent_name = agent_map.get(agent, "app_agent")
 
         # Validate tier
-        if tier not in ("nano", "fast", "smart", "power"):
+        if tier not in ("nano", "fast", "smart", "power", "vision"):
             tier = "fast"
+
+        # If routing to vision agent, force vision tier (multimodal needed)
+        if agent_name == "vision_agent":
+            tier = "vision"
 
         log.info(f"Router classified: agent={agent_name} tier={tier}")
         return agent_name, tier

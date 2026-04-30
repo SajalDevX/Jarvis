@@ -1,1 +1,4 @@
 rich
+mss
+pillow
+pytesseract

@@ -2,6 +2,12 @@ from typing import Iterable
 
 from tools.base import Tool
 from tools.apps import OpenAppTool, CloseAppTool, SearchAppTool, RunCommandTool
+from tools.vision import (
+    TakeScreenshotTool,
+    OCRScreenTool,
+    DescribeScreenTool,
+    FindUIElementTool,
+)
 
 
 class ToolRegistry:
@@ -31,4 +37,8 @@ REGISTRY = ToolRegistry([
     CloseAppTool(),
     SearchAppTool(),
     RunCommandTool(),
+    TakeScreenshotTool(),
+    OCRScreenTool(),
+    DescribeScreenTool(),
+    FindUIElementTool(),
 ])
