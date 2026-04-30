@@ -76,7 +76,12 @@ class Orchestrator:
         """When the target agent is the same as last, pass full history.
         When switching agents, strip tool calls/results so the new agent doesn't
         see tools it doesn't have — keep narrative content only.
+        Stateless agents (uses_history=False) get empty history.
         """
+        if not getattr(target_agent, "uses_history", True):
+            log.debug(f"{target_agent.name} is stateless — empty history")
+            return []
+
         if self._last_agent and target_agent.name == self._last_agent.name:
             return self._strip_meta(self.history)
 

@@ -18,6 +18,9 @@ class Agent(ABC):
     tool_names: list[str] = []
     max_tool_rounds: int = 6
     tier: str = "fast"
+    # When False, agent runs stateless — orchestrator passes empty history.
+    # Useful for agents whose answers depend only on the current turn (e.g. vision).
+    uses_history: bool = True
 
     @property
     def tools_schema(self) -> list[dict]:
