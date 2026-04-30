@@ -15,28 +15,57 @@ def is_online() -> bool:
         return False
 
 
-def chat(messages: list, tools: list | None = None) -> tuple[str, list, dict]:
-    """Send messages to the active LLM. Returns (reply_text, tool_calls, raw_msg).
+def _resolve_model(tier: str) -> tuple[str, int]:
+    """Map tier → (model_id, max_tokens) based on connectivity."""
+    from config import (
+        TIER_MODELS_ONLINE,
+        TIER_MODELS_OFFLINE,
+        TIER_MAX_TOKENS,
+        OPENROUTER_API_KEY,
+    )
+
+    online = is_online() and bool(OPENROUTER_API_KEY)
+    table = TIER_MODELS_ONLINE if online else TIER_MODELS_OFFLINE
+    model = table.get(tier, table["fast"])
+    max_tokens = TIER_MAX_TOKENS.get(tier, 1024)
+    return model, max_tokens
+
+
+def chat(
+    messages: list,
+    tools: list | None = None,
+    tier: str = "fast",
+) -> tuple[str, list, dict]:
+    """Send messages to the LLM for the given tier. Returns (reply, tool_calls, raw_msg).
 
     Routes to OpenRouter when online, Ollama when offline.
     """
+    model, max_tokens = _resolve_model(tier)
+    log.debug(f"chat tier={tier} → model={model}")
+
     if is_online():
-        log.debug("LLM route: OpenRouter")
-        return _chat_openrouter(messages, tools or [])
-    log.debug("LLM route: Ollama")
-    return _chat_ollama(messages, tools or [])
+        from config import OPENROUTER_API_KEY
+        if OPENROUTER_API_KEY:
+            return _chat_openrouter(messages, tools or [], model, max_tokens)
+
+    return _chat_ollama(messages, tools or [], model)
 
 
-def _chat_openrouter(messages: list, tools: list) -> tuple[str, list, dict]:
-    from config import OPENROUTER_API_KEY, OPENROUTER_MODEL, OPENROUTER_URL
+def _chat_openrouter(
+    messages: list,
+    tools: list,
+    model: str,
+    max_tokens: int,
+) -> tuple[str, list, dict]:
+    from config import OPENROUTER_API_KEY, OPENROUTER_URL
 
-    log.debug(f"OpenRouter req: model={OPENROUTER_MODEL}, msgs={len(messages)}, tools={len(tools)}")
+    log.debug(f"OpenRouter req: model={model}, msgs={len(messages)}, tools={len(tools)}, max_tokens={max_tokens}")
 
     body = {
-        "model": OPENROUTER_MODEL,
+        "model": model,
         "messages": messages,
         "stream": False,
-        "max_tokens": 1024,
+        "max_tokens": max_tokens,
     }
     if tools:
         body["tools"] = tools
@@ -84,13 +113,13 @@ def _chat_openrouter(messages: list, tools: list) -> tuple[str, list, dict]:
     return reply.strip(), tool_calls, msg
 
 
-def _chat_ollama(messages: list, tools: list) -> tuple[str, list, dict]:
-    from config import MODEL, OLLAMA_URL
+def _chat_ollama(messages: list, tools: list, model: str) -> tuple[str, list, dict]:
+    from config import OLLAMA_URL
 
-    log.debug(f"Ollama req: model={MODEL}, msgs={len(messages)}, tools={len(tools)}")
+    log.debug(f"Ollama req: model={model}, msgs={len(messages)}, tools={len(tools)}")
 
     body = {
-        "model": MODEL,
+        "model": model,
         "messages": messages,
         "stream": False,
     }

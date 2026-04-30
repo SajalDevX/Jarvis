@@ -8,13 +8,14 @@ from logger import log
 
 
 class Agent(ABC):
-    """Base class for any agent. Subclass and set name, system_prompt, tool_names."""
+    """Base class for any agent. Subclass and set name, system_prompt, tool_names, tier."""
 
     name: str = ""
     description: str = ""
     system_prompt: str = ""
     tool_names: list[str] = []
     max_tool_rounds: int = 6
+    tier: str = "fast"  # which model tier this agent uses by default
 
     def __init__(self):
         self.messages: list[dict] = [
@@ -29,15 +30,17 @@ class Agent(ABC):
         """Clear conversation history (keep system prompt)."""
         self.messages = [{"role": "system", "content": self.system_prompt}]
 
-    def run(self, user_input: str, on_tool_call=None) -> str:
+    def run(self, user_input: str, on_tool_call=None, tier_override: str | None = None) -> str:
         """Run a single user turn. Returns final reply text.
 
         on_tool_call: optional callback(name, args, result) for UI feedback.
+        tier_override: force a specific tier (e.g. router suggests "power").
         """
-        log.info(f"[{self.name}] User: {user_input}")
+        active_tier = tier_override or self.tier
+        log.info(f"[{self.name}] User: {user_input} (tier={active_tier})")
         self.messages.append({"role": "user", "content": user_input})
 
-        reply, tool_calls, raw_msg = chat(self.messages, tools=self.tools_schema)
+        reply, tool_calls, raw_msg = chat(self.messages, tools=self.tools_schema, tier=active_tier)
         self.messages.append(raw_msg)
 
         rounds = 0
@@ -64,7 +67,9 @@ class Agent(ABC):
                 self.messages.append(tool_msg)
 
             try:
-                reply, tool_calls, raw_followup = chat(self.messages, tools=self.tools_schema)
+                reply, tool_calls, raw_followup = chat(
+                    self.messages, tools=self.tools_schema, tier=active_tier
+                )
                 self.messages.append(raw_followup)
             except ConnectionError as e:
                 log.error(f"[{self.name}] follow-up failed: {e}")

@@ -1,43 +1,65 @@
 from agents.base import Agent
 from agents.app_agent import AppAgent
+from agents.chat_agent import ChatAgent
+from agents.router import RouterAgent
+from cache.intent_cache import IntentCache
 from logger import log
 
 
-class Orchestrator:
-    """Routes user input to the appropriate agent.
+# Replies cached as full text — only for deterministic phrases that never change
+# (e.g. "what's your name"). We don't cache app-launching replies because state matters.
+CACHEABLE_REPLY_AGENTS = {"chat_agent"}
 
-    Current strategy: simple keyword routing. Future: LLM-based intent classification.
+
+class Orchestrator:
+    """Cache → Router → Agent pipeline.
+
+    1. Exact-match cache check (instant)
+    2. Router classifies on nano model (~200ms)
+    3. Selected agent runs on its tier (or router-suggested override)
     """
 
     def __init__(self):
         self.agents: dict[str, Agent] = {}
         self._default: Agent | None = None
+        self.router = RouterAgent()
+        self.cache = IntentCache()
         self._register_defaults()
 
     def _register_defaults(self):
-        app = AppAgent()
-        self.register(app, default=True)
+        self.register(AppAgent(), default=True)
+        self.register(ChatAgent())
 
     def register(self, agent: Agent, default: bool = False):
         self.agents[agent.name] = agent
         if default:
             self._default = agent
-        log.info(f"Registered agent: {agent.name}")
-
-    def route(self, user_input: str) -> Agent:
-        """Pick agent based on intent. For now, always returns default (app_agent)."""
-        text = user_input.lower()
-
-        # Simple keyword routing — extend as more agents are added
-        app_keywords = ["open", "close", "launch", "quit", "kill", "start", "run app", "search app"]
-        if any(kw in text for kw in app_keywords):
-            return self.agents["app_agent"]
-
-        return self._default
+        log.info(f"Registered agent: {agent.name} (tier={agent.tier})")
 
     def handle(self, user_input: str, on_tool_call=None) -> tuple[str, str]:
-        """Run user input through the right agent. Returns (agent_name, reply)."""
-        agent = self.route(user_input)
-        log.debug(f"Routed to: {agent.name}")
-        reply = agent.run(user_input, on_tool_call=on_tool_call)
-        return agent.name, reply
+        """Returns (agent_name, reply)."""
+        # 1. Cache check
+        cached = self.cache.get(user_input)
+        if cached:
+            agent_name = cached.agent
+            tier = cached.tier
+            if cached.reply:
+                log.info(f"Cache hit (full): {agent_name}/{tier}")
+                return agent_name, cached.reply
+            log.info(f"Cache hit (route only): {agent_name}/{tier}")
+        else:
+            # 2. Router classifies
+            agent_name, tier = self.router.classify(user_input)
+
+        # 3. Pick agent (fall back to default if unknown)
+        agent = self.agents.get(agent_name) or self._default
+        actual_name = agent.name
+
+        # 4. Run agent with router-suggested tier override
+        reply = agent.run(user_input, on_tool_call=on_tool_call, tier_override=tier)
+
+        # 5. Cache result
+        cache_reply = reply if actual_name in CACHEABLE_REPLY_AGENTS and reply else None
+        self.cache.put(user_input, actual_name, tier, cache_reply)
+
+        return actual_name, reply
