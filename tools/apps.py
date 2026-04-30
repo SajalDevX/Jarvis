@@ -24,6 +24,9 @@ ALIASES = {
 # Synonyms: when user says LHS, also search RHS terms
 SYNONYMS = {
     "notepad": ["text editor", "editor"],
+    "notes": ["text editor", "notebook", "editor"],
+    "note": ["text editor", "notebook", "editor"],
+    "notebook": ["text editor", "editor"],
     "wordpad": ["text editor", "office", "writer"],
     "word": ["office", "writer", "document"],
     "excel": ["spreadsheet", "office", "calc"],
