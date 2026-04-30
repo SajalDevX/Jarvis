@@ -1,5 +1,7 @@
 #!/usr/bin/env python3
 import sys
+import uuid
+import time
 
 from rich.console import Console
 from rich.panel import Panel
@@ -16,15 +18,28 @@ console = Console()
 
 
 def render_step(step: dict):
-    """Pretty-print a streaming step from LangGraph."""
-    for node_name, node_state in step.items():
-        msgs = node_state.get("messages", [])
-        for m in msgs:
+    for _, node_state in step.items():
+        for m in node_state.get("messages", []):
             if isinstance(m, ToolMessage):
                 console.print(f"  [green]✓[/green] [dim]{m.name}[/dim] → {m.content}")
             elif isinstance(m, AIMessage) and getattr(m, "tool_calls", None):
                 for tc in m.tool_calls:
                     console.print(f"  [yellow]→[/yellow] [dim]{tc['name']}[/dim]({tc['args']})")
+
+
+def warmup(graph, thread_id: str):
+    """Trigger heavy lazy-init in openai/httpx so first user turn is fast."""
+    try:
+        # Cheapest possible call — just a ping. Cost ~$0.0001.
+        graph.invoke(
+            {"messages": [HumanMessage(content="say 'ok'")]},
+            config={
+                "configurable": {"thread_id": thread_id + "_warmup"},
+                "recursion_limit": 3,
+            },
+        )
+    except Exception as e:
+        log.warning(f"Warmup failed (non-fatal): {e}")
 
 
 def main():
@@ -47,8 +62,11 @@ def main():
         expand=False,
     ))
 
-    graph = build_graph()
-    history: list = []
+    thread_id = str(uuid.uuid4())
+
+    with Status("[dim]warming up...[/dim]", console=console, spinner="dots"):
+        graph = build_graph()
+        warmup(graph, thread_id)
 
     while True:
         try:
@@ -61,36 +79,40 @@ def main():
             continue
 
         if user_input == "/reset":
-            history.clear()
+            thread_id = str(uuid.uuid4())
             console.print("[dim]History cleared.[/dim]")
             continue
 
-        history.append(HumanMessage(content=user_input))
         log.info(f"User: {user_input}")
+        graph_config = {"configurable": {"thread_id": thread_id}}
+        t0 = time.time()
 
-        final_state = None
+        final_msg = None
         try:
             with Status("[dim]thinking...[/dim]", console=console, spinner="dots"):
                 for step in graph.stream(
-                    {"messages": history, "agent": ""},
+                    {"messages": [HumanMessage(content=user_input)]},
+                    config=graph_config,
                     stream_mode="updates",
                 ):
                     render_step(step)
-                    final_state = step
+                    # Track the latest AIMessage with content for final display
+                    for node_state in step.values():
+                        for m in node_state.get("messages", []):
+                            if isinstance(m, AIMessage) and m.content and not getattr(m, "tool_calls", None):
+                                final_msg = m
         except Exception as e:
             log.error(f"Graph run failed: {e}", exc_info=True)
             console.print(f"[red]Error:[/red] {e}")
-            history.pop()
             continue
 
-        # Extract final assistant message
-        if final_state:
-            for node_state in final_state.values():
-                for m in node_state.get("messages", []):
-                    if isinstance(m, AIMessage) and m.content:
-                        history.append(m)
-                        console.print(f"\n[bold cyan]Jarvis:[/bold cyan] {m.content}")
-                        break
+        elapsed = time.time() - t0
+        log.debug(f"Turn took {elapsed:.2f}s")
+
+        if final_msg:
+            console.print(f"\n[bold cyan]Jarvis:[/bold cyan] {final_msg.content} [dim]({elapsed:.1f}s)[/dim]")
+        else:
+            console.print(f"[dim]Jarvis: (no response, {elapsed:.1f}s)[/dim]")
 
 
 if __name__ == "__main__":
