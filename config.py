@@ -16,8 +16,29 @@ OLLAMA_URL = os.environ.get("JARVIS_OLLAMA_URL", "http://localhost:11434/api/cha
 
 # Online (OpenRouter — OpenAI-compatible)
 OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
-OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "qwen/qwen3.5")
+OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "google/gemini-2.5-flash-lite")  # default fast model
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
+
+# Tiered model registry — pick model based on task complexity
+TIER_MODELS_ONLINE = {
+    "nano":   os.environ.get("JARVIS_TIER_NANO",   "google/gemini-2.5-flash-lite"),
+    "fast":   os.environ.get("JARVIS_TIER_FAST",   "google/gemini-2.5-flash-lite"),
+    "smart":  os.environ.get("JARVIS_TIER_SMART",  "google/gemini-2.5-flash"),
+    "power":  os.environ.get("JARVIS_TIER_POWER",  "anthropic/claude-sonnet-4-6"),
+    "vision": os.environ.get("JARVIS_TIER_VISION", "google/gemini-2.5-flash"),
+}
+
+# Offline fallback — local model handles every tier
+TIER_MODELS_OFFLINE = {tier: MODEL for tier in TIER_MODELS_ONLINE}
+
+# Per-tier output cap (cost + speed guardrail)
+TIER_MAX_TOKENS = {
+    "nano":   256,
+    "fast":   1024,
+    "smart":  2048,
+    "power":  4096,
+    "vision": 1024,
+}
 
 SYSTEM_PROMPT = (
     "You are Jarvis, a desktop assistant running on Linux. "

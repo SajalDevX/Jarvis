@@ -24,6 +24,9 @@ ALIASES = {
 # Synonyms: when user says LHS, also search RHS terms
 SYNONYMS = {
     "notepad": ["text editor", "editor"],
+    "notes": ["text editor", "notebook", "editor"],
+    "note": ["text editor", "notebook", "editor"],
+    "notebook": ["text editor", "editor"],
     "wordpad": ["text editor", "office", "writer"],
     "word": ["office", "writer", "document"],
     "excel": ["spreadsheet", "office", "calc"],
@@ -196,9 +199,16 @@ class SearchAppTool(Tool):
         q = query.lower().strip()
         log.debug(f"search_app: '{q}'")
 
-        # Build query set: original + synonyms
-        queries = {q}
-        queries.update(SYNONYMS.get(q, []))
+        # Drop filler words so "notes app" → "notes"
+        FILLER = {"app", "application", "program", "the", "a", "an", "open", "please"}
+        tokens = [t for t in q.split() if t not in FILLER]
+        cleaned = " ".join(tokens) if tokens else q
+
+        # Build query set: cleaned phrase + each token + their synonyms
+        queries = {cleaned}
+        queries.update(tokens)
+        for term in [cleaned] + tokens:
+            queries.update(SYNONYMS.get(term, []))
 
         index = _get_index()
         seen = set()

@@ -7,6 +7,7 @@ class AppAgent(Agent):
     name = "app_agent"
     description = "Opens, closes, and searches for desktop applications. Use for any request involving launching or quitting apps."
     tool_names = ["search_app", "open_app", "close_app"]
+    tier = "fast"  # app tasks are simple, use fast tier
 
     system_prompt = (
         "You are the App Agent — a Linux desktop assistant focused on managing applications.\n\n"
