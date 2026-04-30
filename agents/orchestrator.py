@@ -36,7 +36,10 @@ MAX_HISTORY_MESSAGES = 40
 _VISION_RE = re.compile(
     r"\b(screen|screenshot|ocr|describe my|what's on (my )?screen|"
     r"what is on (my )?screen|what does (it|the screen|my screen) say|"
-    r"where is (the |a |an )|find (the |a |an ))",
+    r"where is (the |a |an )|find (the |a |an )|"
+    r"what (app|window|program) (is |'s )?(open|in focus|running|active)|"
+    r"which (app|window) (is |'s )?(open|focused|active)|"
+    r"focused window|active window|list (all )?windows)",
     re.IGNORECASE,
 )
 _APP_RE = re.compile(

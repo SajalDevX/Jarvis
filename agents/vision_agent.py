@@ -20,6 +20,18 @@ _FIND_RE = re.compile(
     r"\b(where (is|'s) (the |a |an )?(.+?)(\?|$)|find (the |a |an )?(.+?)(\?|$))",
     re.IGNORECASE,
 )
+_ACTIVE_WIN_RE = re.compile(
+    r"\b(what (app|window|program) (is |'s )?(open|in focus|running|active)|"
+    r"which (app|window) (is |'s )?(open|focused|active)|"
+    r"current (app|window|focused window)|"
+    r"focused window|active window)\b",
+    re.IGNORECASE,
+)
+_LIST_WIN_RE = re.compile(
+    r"\b(list (all )?windows|what windows are open|which apps are running|"
+    r"all open (apps|windows))\b",
+    re.IGNORECASE,
+)
 
 
 class VisionAgent(Agent):
@@ -34,6 +46,8 @@ class VisionAgent(Agent):
         "OCRs text, and identifies UI elements (read-only)."
     )
     tool_names = [
+        "active_window",
+        "list_windows",
         "take_screenshot",
         "ocr_screen",
         "describe_screen",
@@ -72,15 +86,23 @@ class VisionAgent(Agent):
         """Return tool-result reply if the input matches a known pattern, else None."""
         text = user_input.strip()
 
-        # OCR
+        # FAST: active window (no LLM, ~10-50ms)
+        if _ACTIVE_WIN_RE.search(text):
+            return self._dispatch("active_window", {}, on_tool_call)
+
+        # FAST: list windows (no LLM, ~10ms)
+        if _LIST_WIN_RE.search(text):
+            return self._dispatch("list_windows", {}, on_tool_call)
+
+        # OCR (no LLM, ~300-500ms)
         if _OCR_RE.search(text):
             return self._dispatch("ocr_screen", {}, on_tool_call)
 
-        # Describe screen
+        # Describe screen (vision LLM, ~3s)
         if _DESCRIBE_RE.search(text):
             return self._dispatch("describe_screen", {"question": user_input}, on_tool_call)
 
-        # Find UI element ("where is X" / "find X")
+        # Find UI element (vision LLM, ~3s)
         m = _FIND_RE.search(text)
         if m:
             target = (m.group(4) or m.group(7) or "").strip().rstrip("?.!").strip()

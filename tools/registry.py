@@ -7,6 +7,8 @@ from tools.vision import (
     OCRScreenTool,
     DescribeScreenTool,
     FindUIElementTool,
+    ActiveWindowTool,
+    ListWindowsTool,
 )
 
 
@@ -41,4 +43,6 @@ REGISTRY = ToolRegistry([
     OCRScreenTool(),
     DescribeScreenTool(),
     FindUIElementTool(),
+    ActiveWindowTool(),
+    ListWindowsTool(),
 ])

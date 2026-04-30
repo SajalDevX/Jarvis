@@ -10,6 +10,7 @@ from __future__ import annotations
 from logger import log
 from tools.base import Tool
 from vision.screen_state import SCREEN
+from vision.window_info import active_window_info, list_windows
 
 
 class TakeScreenshotTool(Tool):
@@ -131,6 +132,47 @@ class DescribeScreenTool(Tool):
 
         SCREEN.set_describe(question, reply)
         return reply or "(no description)"
+
+
+class ActiveWindowTool(Tool):
+    name = "active_window"
+    description = (
+        "Return info about the currently focused window: title, app name, WM class, "
+        "PID, geometry. Fast (~10-50ms), no LLM cost. Use this for 'what app is open', "
+        "'what window is in focus', 'what am I looking at' style questions BEFORE "
+        "resorting to expensive vision LLM tools."
+    )
+    parameters = {"type": "object", "properties": {}, "required": []}
+
+    def execute(self) -> str:
+        info = active_window_info()
+        if not info["title"]:
+            return "Could not detect active window (xdotool unavailable or no focused window)."
+        lines = [
+            f"App: {info['app'] or 'unknown'}",
+            f"Title: {info['title']}",
+        ]
+        if info["wm_class"]:
+            lines.append(f"WM class: {info['wm_class']}")
+        if info["geometry"]:
+            geom_line = info["geometry"].replace("\n", " | ")
+            lines.append(f"Geometry: {geom_line}")
+        return "\n".join(lines)
+
+
+class ListWindowsTool(Tool):
+    name = "list_windows"
+    description = (
+        "List all open windows on the desktop with titles. Fast (~10ms), no LLM. "
+        "Use to answer 'what windows are open' / 'which apps are running'."
+    )
+    parameters = {"type": "object", "properties": {}, "required": []}
+
+    def execute(self) -> str:
+        windows = list_windows()
+        if not windows:
+            return "Could not list windows (wmctrl unavailable)."
+        return "\n".join(f"- {w['title']}" for w in windows[:30])
 
 
 class FindUIElementTool(Tool):
