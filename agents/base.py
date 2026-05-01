@@ -96,5 +96,13 @@ class Agent(ABC):
                 log.error(f"[{self.name}] follow-up failed: {e}")
                 return "", new_turn
 
+        # Fallback: if model returned empty after successful tool runs, synthesize a reply
+        if not reply.strip():
+            tool_outputs = [m.get("content", "") for m in new_turn if m.get("role") == "tool"]
+            if tool_outputs:
+                # Use the last tool output verbatim — usually "Opened firefox (PID 123)" etc.
+                reply = tool_outputs[-1]
+                log.warning(f"[{self.name}] empty model reply; using tool output as fallback")
+
         log.info(f"[{self.name}] Reply: {reply[:100]}")
         return reply, new_turn
