@@ -231,6 +231,119 @@ class SearchAppTool(Tool):
         return "Installed apps matching:\n" + "\n".join(matches[:10])
 
 
+class SmartOpenAppTool(Tool):
+    """One-shot search + open. Saves a model round-trip when intent is clear.
+
+    Searches the app index using the user's term (with synonyms / filler stripped),
+    then opens the best match. Returns ambiguous-match info if no clear winner.
+    """
+    name = "smart_open_app"
+    description = (
+        "Open a desktop app by user-friendly name. Internally searches with synonym "
+        "expansion and filler-word stripping, then launches the best match. "
+        "Use this for 'open X' / 'launch X' / 'run X' style requests — single tool call. "
+        "Returns ambiguous-match info if multiple non-exact candidates exist."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "query": {
+                "type": "string",
+                "description": "What the user wants to open (e.g. 'text editor', 'browser', 'firefox')",
+            }
+        },
+        "required": ["query"],
+    }
+
+    def execute(self, query: str) -> str:
+        q = query.lower().strip()
+        log.debug(f"smart_open_app: '{q}'")
+
+        # Stage 1: alias / direct command match
+        if q in ALIASES:
+            return open_app_impl(ALIASES[q])
+        if shutil.which(q):
+            return open_app_impl(q)
+
+        # Stage 2: search the index using the same logic as SearchAppTool
+        FILLER = {"app", "application", "program", "the", "a", "an", "open", "please"}
+        tokens = [t for t in q.split() if t not in FILLER]
+        cleaned = " ".join(tokens) if tokens else q
+
+        terms = {cleaned}
+        terms.update(tokens)
+        for term in [cleaned] + tokens:
+            terms.update(SYNONYMS.get(term, []))
+
+        from tools.apps import _get_index  # avoid forward ref
+        index = _get_index()
+        seen = set()
+        matches = []
+        exact_matches = []
+
+        for term in terms:
+            for app in index:
+                key = (app["name"], app["exec"])
+                if key in seen:
+                    continue
+                if term in app["haystack"]:
+                    seen.add(key)
+                    matches.append(app)
+                    # Exact match: user's cleaned query equals app name (case-insensitive)
+                    if cleaned == app["name"].lower():
+                        exact_matches.append(app)
+
+        # Open if exact match
+        if len(exact_matches) >= 1:
+            return open_app_impl(exact_matches[0]["exec"])
+
+        # If only one candidate at all, open it
+        if len(matches) == 1:
+            return open_app_impl(matches[0]["exec"])
+
+        # If first match's name contains the cleaned query, open it (substring match)
+        if matches:
+            for app in matches:
+                if cleaned in app["name"].lower():
+                    return open_app_impl(app["exec"])
+
+        # Multiple ambiguous candidates — ask user
+        if matches:
+            options = ", ".join(f"{a['name']}" for a in matches[:5])
+            return f"AMBIGUOUS: multiple candidates for '{query}': {options}. Ask user which one."
+
+        return f"NOT_FOUND: no installed app matches '{query}'."
+
+
+def open_app_impl(cmd: str) -> str:
+    """Shared open implementation used by OpenAppTool and SmartOpenAppTool."""
+    log.debug(f"open_app_impl: '{cmd}'")
+    if shutil.which(cmd):
+        try:
+            proc = subprocess.Popen(
+                [cmd],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                start_new_session=True,
+            )
+            log.info(f"Launched '{cmd}' PID={proc.pid}")
+            return f"Opened {cmd} (PID {proc.pid})"
+        except Exception as e:
+            log.error(f"Launch failed: {e}")
+            return f"Failed to open '{cmd}': {e}"
+    try:
+        proc = subprocess.Popen(
+            ["xdg-open", cmd],
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            start_new_session=True,
+        )
+        return f"Opened {cmd} via xdg-open (PID {proc.pid})"
+    except Exception as e:
+        log.error(f"xdg-open failed: {e}")
+        return f"Failed to open '{cmd}': {e}"
+
+
 class RunCommandTool(Tool):
     name = "run_command"
     description = "Run a shell command and return its output. Use for quick read-only system tasks (ls, cat, ps, etc.)."

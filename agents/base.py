@@ -18,6 +18,9 @@ class Agent(ABC):
     tool_names: list[str] = []
     max_tool_rounds: int = 6
     tier: str = "fast"
+    # When False, agent runs stateless — orchestrator passes empty history.
+    # Useful for agents whose answers depend only on the current turn (e.g. vision).
+    uses_history: bool = True
 
     @property
     def tools_schema(self) -> list[dict]:
@@ -92,6 +95,14 @@ class Agent(ABC):
             except ConnectionError as e:
                 log.error(f"[{self.name}] follow-up failed: {e}")
                 return "", new_turn
+
+        # Fallback: if model returned empty after successful tool runs, synthesize a reply
+        if not reply.strip():
+            tool_outputs = [m.get("content", "") for m in new_turn if m.get("role") == "tool"]
+            if tool_outputs:
+                # Use the last tool output verbatim — usually "Opened firefox (PID 123)" etc.
+                reply = tool_outputs[-1]
+                log.warning(f"[{self.name}] empty model reply; using tool output as fallback")
 
         log.info(f"[{self.name}] Reply: {reply[:100]}")
         return reply, new_turn

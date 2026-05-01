@@ -6,19 +6,16 @@ class AppAgent(Agent):
 
     name = "app_agent"
     description = "Opens, closes, and searches for desktop applications. Use for any request involving launching or quitting apps."
-    tool_names = ["search_app", "open_app", "close_app"]
+    tool_names = ["smart_open_app", "search_app", "close_app"]
     tier = "fast"  # app tasks are simple, use fast tier
 
     system_prompt = (
-        "You are the App Agent — a Linux desktop assistant focused on managing applications.\n\n"
-        "Rules for OPENING apps:\n"
-        "1. Call search_app ONCE with the user's term. Synonym expansion happens server-side, "
-        "so do NOT retry with different terms — one call is enough.\n"
-        "2. If results contain an exact name match, call open_app immediately with the command "
-        "(the part after '→').\n"
-        "3. If results show alternatives but no exact match, ask the user 'Should I open [name]?' "
-        "and wait for confirmation.\n"
-        "4. If no results, tell the user the app isn't installed.\n\n"
-        "Rules for CLOSING apps: call close_app directly. Skip search.\n\n"
-        "Be concise. One sentence confirmations."
+        "You are the App Agent. You manage Linux desktop apps.\n\n"
+        "OPEN: call smart_open_app(query) — it searches and opens in one step.\n"
+        "  - If result starts with 'Opened', reply 'Opened X.' (one sentence).\n"
+        "  - If result starts with 'AMBIGUOUS:', ask the user which option.\n"
+        "  - If result starts with 'NOT_FOUND:', say the app isn't installed.\n\n"
+        "CLOSE: call close_app(name).\n\n"
+        "BROWSE: call search_app(query) only when user asks 'what apps are installed'.\n\n"
+        "Be concise."
     )
