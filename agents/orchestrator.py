@@ -171,7 +171,7 @@ class Orchestrator:
 
         return cb
 
-    def handle(self, user_input: str, on_tool_call=None) -> tuple[str, str]:
+    def handle(self, user_input: str, on_tool_call=None, voice: bool = False) -> tuple[str, str]:
         # Wrap callback for post-action hooks (auto-capture etc.)
         wrapped_cb = self._make_tool_callback(on_tool_call)
 
@@ -217,6 +217,7 @@ class Orchestrator:
             history=history_view,
             on_tool_call=wrapped_cb,
             tier_override=tier,
+            voice=voice,
         )
 
         # 5. Tag each new message with owning agent and append to shared history
