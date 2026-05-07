@@ -38,6 +38,7 @@ def chat(
     tools: list | None = None,
     tier: str = "fast",
     image_paths: list[str] | None = None,
+    image_max_width: int = 768,
 ) -> tuple[str, list, dict]:
     """Send messages to the LLM for the given tier. Returns (reply, tool_calls, raw_msg).
 
@@ -54,7 +55,7 @@ def chat(
         image_paths = None
 
     if image_paths:
-        messages = _attach_images(messages, image_paths)
+        messages = _attach_images(messages, image_paths, max_width=image_max_width)
 
     if is_online():
         from config import OPENROUTER_API_KEY, GROQ_API_KEY, GROQ_LLM_MODEL
@@ -75,7 +76,7 @@ def chat(
     return _chat_ollama(messages, tools or [], model)
 
 
-def _attach_images(messages: list, image_paths: list[str]) -> list:
+def _attach_images(messages: list, image_paths: list[str], max_width: int = 768) -> list:
     """Mutate the last user message into multimodal content with images attached.
 
     Uses OpenAI/OpenRouter vision format:
@@ -105,7 +106,7 @@ def _attach_images(messages: list, image_paths: list[str]) -> list:
         # Use already-encoded JPEG if downscaled, else read raw + base64
         from vision.capture import downscale_for_llm
         try:
-            jpeg_bytes = downscale_for_llm(path)
+            jpeg_bytes = downscale_for_llm(path, max_width=max_width)
             b64 = base64.b64encode(jpeg_bytes).decode("ascii")
             mime = "image/jpeg"
         except Exception as e:

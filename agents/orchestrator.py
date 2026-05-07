@@ -6,6 +6,7 @@ import time
 from agents.base import Agent
 from agents.app_agent import AppAgent
 from agents.chat_agent import ChatAgent
+from agents.desktop_agent import DesktopAgent
 from agents.router import RouterAgent
 from agents.vision_agent import VisionAgent
 from cache.intent_cache import IntentCache
@@ -47,6 +48,16 @@ _APP_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Imperative UI control verbs → desktop_agent. Excludes "open/launch <app>" which
+# direct-dispatch handles atomically. Matches text starting with the verb so
+# "click the login button" routes correctly.
+_DESKTOP_RE = re.compile(
+    r"^(click|tap|double[-\s]?click|right[-\s]?click|press|type|paste|enter|"
+    r"select|highlight|drag|scroll|swipe|fill\s+in|fill\s+out|submit|hit|"
+    r"focus|switch\s+to|navigate\s+to|go\s+to|move\s+(?:cursor|mouse))\b",
+    re.IGNORECASE,
+)
+
 # Even tighter: zero-LLM path for "open <app>" / "launch <app>" / "start <app>".
 # Calls smart_open_app directly and returns a canned reply. Saves both router
 # AND agent LLM calls (~600-1500ms in voice mode).
@@ -66,10 +77,15 @@ _DIRECT_OPEN_RE = re.compile(
 def _quick_classify(text: str) -> tuple[str, str] | None:
     """Pattern-only routing for unambiguous intents. None means 'use the LLM router'."""
     t = text.strip()
-    if _VISION_RE.search(t):
-        return "vision_agent", "vision"
+    # Desktop verbs are imperative — they always start the sentence and should
+    # outrank vision keywords that might co-occur ("click the close button on
+    # the focused window" → desktop, not vision).
+    if _DESKTOP_RE.match(t):
+        return "desktop_agent", "vision"
     if _APP_RE.match(t):
         return "app_agent", "fast"
+    if _VISION_RE.search(t):
+        return "vision_agent", "vision"
     return None
 
 
@@ -100,6 +116,7 @@ class Orchestrator:
         self.register(ChatAgent(), default=True)
         self.register(AppAgent())
         self.register(VisionAgent())
+        self.register(DesktopAgent())
 
     def register(self, agent: Agent, default: bool = False):
         self.agents[agent.name] = agent

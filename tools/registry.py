@@ -10,6 +10,20 @@ from tools.vision import (
     ActiveWindowTool,
     ListWindowsTool,
 )
+from tools.ground import GroundElementTool
+from tools.desktop_actions import (
+    ScreenScreenshotTool,
+    ScreenWaitTool,
+    ScreenZoomTool,
+    ScreenClickTool,
+    ScreenDoubleClickTool,
+    ScreenRightClickTool,
+    ScreenMouseMoveTool,
+    ScreenDragTool,
+    ScreenScrollTool,
+    ScreenTypeTool,
+    ScreenKeyTool,
+)
 
 
 class ToolRegistry:
@@ -46,4 +60,17 @@ REGISTRY = ToolRegistry([
     FindUIElementTool(),
     ActiveWindowTool(),
     ListWindowsTool(),
+    # Phase 5: desktop control
+    GroundElementTool(),
+    ScreenScreenshotTool(),
+    ScreenWaitTool(),
+    ScreenZoomTool(),
+    ScreenClickTool(),
+    ScreenDoubleClickTool(),
+    ScreenRightClickTool(),
+    ScreenMouseMoveTool(),
+    ScreenDragTool(),
+    ScreenScrollTool(),
+    ScreenTypeTool(),
+    ScreenKeyTool(),
 ])
