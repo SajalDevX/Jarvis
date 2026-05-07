@@ -40,7 +40,9 @@ class ScreenState:
             try:
                 path = capture_active_window()
             except Exception as e:
-                log.warning(f"active_window capture failed ({e}); falling back to full screen")
+                # X11 protocol races are common when the active window moves
+                # mid-grab; full-screen always works. Demote to debug — recovered.
+                log.debug(f"active_window capture race ({e}); using full screen")
                 path = capture_full_screen()
 
         new_hash = _hash_file(path)

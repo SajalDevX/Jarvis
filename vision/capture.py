@@ -68,6 +68,32 @@ def _active_window_geometry() -> tuple[int, int, int, int] | None:
         return None
 
 
+def _silence_xlib_errors():
+    """Context-managerless: dup2 fd 2 → /dev/null, return restore fn.
+
+    Xlib's default error handler writes raw 'X Error of failed request' lines
+    to fd 2 from C, bypassing Python's stderr. Silence at fd level briefly
+    during mss.grab() since mss can hit a benign protocol race when the
+    active window moves mid-call.
+    """
+    import os as _os
+    try:
+        devnull = _os.open(_os.devnull, _os.O_WRONLY)
+        saved = _os.dup(2)
+        _os.dup2(devnull, 2)
+
+        def restore():
+            try:
+                _os.dup2(saved, 2)
+                _os.close(saved)
+                _os.close(devnull)
+            except Exception:
+                pass
+        return restore
+    except Exception:
+        return lambda: None
+
+
 def capture_active_window() -> Path:
     """Capture only the active window. Falls back to full screen if xdotool missing."""
     geom = _active_window_geometry()
@@ -77,9 +103,13 @@ def capture_active_window() -> Path:
 
     x, y, w, h = geom
     out = _new_cache_path()
-    with mss.mss() as sct:
-        img = sct.grab({"left": x, "top": y, "width": w, "height": h})
-        Image.frombytes("RGB", img.size, img.bgra, "raw", "BGRX").save(out, "PNG")
+    restore = _silence_xlib_errors()
+    try:
+        with mss.mss() as sct:
+            img = sct.grab({"left": x, "top": y, "width": w, "height": h})
+            Image.frombytes("RGB", img.size, img.bgra, "raw", "BGRX").save(out, "PNG")
+    finally:
+        restore()
     log.debug(f"capture_active_window {x},{y},{w}x{h} → {out}")
     _rotate_cache()
     return out
