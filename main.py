@@ -1,5 +1,38 @@
 #!/usr/bin/env python3
+import os
 import sys
+import warnings
+from contextlib import contextmanager
+
+# Quiet noisy import-time output (ALSA/JACK/transformers/deprecations)
+# unless JARVIS_DEBUG=1.
+_QUIET = not os.environ.get("JARVIS_DEBUG")
+if _QUIET:
+    warnings.filterwarnings("ignore")
+    os.environ.setdefault("PYTHONWARNINGS", "ignore")
+    os.environ.setdefault("TRANSFORMERS_VERBOSITY", "error")
+    os.environ.setdefault("TRANSFORMERS_NO_ADVISORY_WARNINGS", "1")
+
+
+@contextmanager
+def _silence_stderr():
+    """Temporarily redirect raw stderr fd to /dev/null (silences C libs too)."""
+    if not _QUIET:
+        yield
+        return
+    try:
+        devnull = os.open(os.devnull, os.O_WRONLY)
+        saved = os.dup(2)
+        os.dup2(devnull, 2)
+        try:
+            yield
+        finally:
+            os.dup2(saved, 2)
+            os.close(saved)
+            os.close(devnull)
+    except Exception:
+        yield
+
 
 from rich.console import Console
 from rich.panel import Panel
@@ -66,7 +99,7 @@ def main():
             if use_pipecat:
                 console.print("[dim]Voice runtime: [bold green]pipecat[/bold green] (Groq STT + Groq LLM + ElevenLabs WS TTS)[/dim]")
                 from voice.pipecat_runtime import PipecatVoiceRuntime
-                PipecatVoiceRuntime(orchestrator, console=console).run()
+                PipecatVoiceRuntime(orchestrator, console=console, quiet=_QUIET).run()
             else:
                 console.print("[dim]Voice runtime: [yellow]legacy[/yellow] (offline / missing keys)[/dim]")
                 from voice.runtime import VoiceRuntime

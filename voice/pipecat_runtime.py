@@ -11,6 +11,18 @@ because JarvisLLMService delegates to the same Orchestrator used in text mode.
 from __future__ import annotations
 
 import asyncio
+import os
+import sys
+
+# Quiet Pipecat / loguru noise unless JARVIS_DEBUG=1.
+# Must run BEFORE importing pipecat modules so its bind happens at WARNING level.
+try:
+    from loguru import logger as _loguru
+    _loguru.remove()
+    _level = "DEBUG" if os.environ.get("JARVIS_DEBUG") else "WARNING"
+    _loguru.add(sys.stderr, level=_level, format="<level>{level: <7}</level> | {message}")
+except ImportError:
+    pass
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.pipeline.pipeline import Pipeline
@@ -42,9 +54,10 @@ def _make_voice_cb(console):
 
 
 class PipecatVoiceRuntime:
-    def __init__(self, orchestrator: Orchestrator, console=None):
+    def __init__(self, orchestrator: Orchestrator, console=None, quiet: bool = True):
         self.orch = orchestrator
         self.console = console
+        self.quiet = quiet
 
     def _build_pipeline(self) -> tuple[Pipeline, PipelineTask]:
         from config import (
@@ -84,6 +97,7 @@ class PipecatVoiceRuntime:
         llm = JarvisLLMService(
             orchestrator=self.orch,
             on_tool_call=_make_voice_cb(self.console),
+            console=self.console,
         )
 
         # TTS: ElevenLabs Turbo v2 over WebSocket streaming-input.
@@ -115,11 +129,39 @@ class PipecatVoiceRuntime:
         return pipeline, task
 
     async def _run_async(self):
-        _, task = self._build_pipeline()
-        runner = PipelineRunner()
-        log.info("Pipecat voice pipeline starting")
-        await runner.run(task)
-        log.info("Pipecat voice pipeline stopped")
+        # In quiet mode, redirect raw fd 2 → /dev/null for the whole session
+        # so ALSA/JACK chatter and pipecat loguru spam stay out of the chat UI.
+        # Errors still go to jarvis.log (our logger writes to file).
+        saved_fd = None
+        devnull_fd = None
+        if self.quiet:
+            try:
+                devnull_fd = os.open(os.devnull, os.O_WRONLY)
+                saved_fd = os.dup(2)
+                os.dup2(devnull_fd, 2)
+            except Exception:
+                saved_fd = None
+
+        try:
+            _, task = self._build_pipeline()
+            runner = PipelineRunner()
+            log.info("Pipecat voice pipeline starting")
+            if self.console:
+                self.console.print(
+                    "[dim]Listening… speak whenever (always-on VAD). Ctrl+C to exit. "
+                    "Set JARVIS_DEBUG=1 to see pipeline logs.[/dim]"
+                )
+            await runner.run(task)
+            log.info("Pipecat voice pipeline stopped")
+        finally:
+            if saved_fd is not None:
+                try:
+                    os.dup2(saved_fd, 2)
+                    os.close(saved_fd)
+                    if devnull_fd is not None:
+                        os.close(devnull_fd)
+                except Exception:
+                    pass
 
     def run(self):
         try:

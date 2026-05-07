@@ -27,9 +27,14 @@ class Agent(ABC):
         return REGISTRY.schemas(self.tool_names)
 
     VOICE_ADDENDUM = (
-        "\n\nIMPORTANT: The user is hearing your reply via TTS. Reply in 1-2 short "
-        "natural sentences. No markdown, no parentheticals like '(PID 123)', no code, "
-        "no lists. Speak like a real assistant on a phone call."
+        "\n\nVOICE PERSONA: You are Jarvis — Tony Stark's AI butler from Iron Man. "
+        "Speak like that: dry, polite, concise, lightly British. Address the user as 'sir' "
+        "occasionally (not every reply). Reply in 1-2 short natural sentences. No markdown, "
+        "no parentheticals like '(PID 123)', no code, no lists, no stage directions. "
+        "When describing the screen, never say 'the screenshot shows' — say what's on screen "
+        "directly: 'You have VS Code open, sir, with a Python script running.' "
+        "When confirming an action, be brief: 'Done, sir.' / 'Firefox is open.' "
+        "Avoid filler like 'I can see that' or 'It appears'. Just state."
     )
 
     def run(
@@ -77,6 +82,10 @@ class Agent(ABC):
             log.debug(f"[{self.name}] tool round {rounds}")
             for tc in tool_calls:
                 tname = tc["function"]["name"]
+                # Llama 3.1 (Groq) prefixes tool names with "default_api." or
+                # "functions." — strip any namespace prefix.
+                if "." in tname:
+                    tname = tname.rsplit(".", 1)[-1]
                 args = tc["function"]["arguments"]
                 if isinstance(args, str):
                     args = json.loads(args) if args else {}

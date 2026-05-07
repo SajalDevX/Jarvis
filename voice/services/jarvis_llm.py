@@ -26,9 +26,28 @@ from pipecat.frames.frames import (
 )
 from pipecat.processors.frame_processor import FrameDirection
 from pipecat.services.llm_service import LLMService
+from pipecat.services.settings import LLMSettings
 
 from agents.orchestrator import Orchestrator
 from logger import log
+
+
+def _store_settings() -> LLMSettings:
+    """Build a fully-populated LLMSettings store so validate_complete() passes.
+    Our service ignores most of these — Orchestrator owns model/tier selection."""
+    return LLMSettings(
+        model="jarvis-orchestrator",
+        system_instruction=None,
+        temperature=None,
+        max_tokens=None,
+        top_p=None,
+        top_k=None,
+        frequency_penalty=None,
+        presence_penalty=None,
+        seed=None,
+        filter_incomplete_user_turns=None,
+        user_turn_completion_config=None,
+    )
 
 
 # Punctuation-based sentence splitter — emits chunks ending with .!? or newline.
@@ -47,11 +66,14 @@ class JarvisLLMService(LLMService):
         self,
         orchestrator: Orchestrator,
         on_tool_call: Callable | None = None,
+        console=None,
         **kwargs,
     ):
+        kwargs.setdefault("settings", _store_settings())
         super().__init__(**kwargs)
         self._orch = orchestrator
         self._on_tool_call = on_tool_call
+        self._console = console
 
     @staticmethod
     def _last_user_text(messages: list[dict]) -> str:
@@ -79,6 +101,8 @@ class JarvisLLMService(LLMService):
             return
 
         log.info(f"JarvisLLMService received: {user_text!r}")
+        if self._console:
+            self._console.print(f"\n[bold]You:[/bold] {user_text}")
         await self.push_frame(LLMFullResponseStartFrame())
         await self.start_processing_metrics()
         await self.start_ttfb_metrics()
@@ -95,6 +119,8 @@ class JarvisLLMService(LLMService):
             )
 
             if reply:
+                if self._console:
+                    self._console.print(f"[bold cyan]Jarvis[/bold cyan] [dim]({agent_name})[/dim]: {reply}")
                 for sentence in _split_for_tts(reply):
                     await self.push_frame(LLMTextFrame(sentence + " "))
         except Exception as e:
