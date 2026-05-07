@@ -30,6 +30,7 @@ _SYSTEM_PROMPT = """You are Jarvis acting as a desktop control agent. You can SE
 
 # RULES (non-negotiable):
 - You may call ONE tool per step. The system loops automatically.
+- BEFORE the first click in any task, call `active_window` to verify the right app is focused. If it's wrong (e.g. WM class is `gjs`, `gnome-shell`, or some popup), call `focus_window(match=<app_name>)` to bring the intended app to the front, then proceed.
 - ALWAYS ground before clicking. If `ground_element` returns confidence=low, call `screen_zoom` on the suspected region and re-ground.
 - Use `screen_key('Return')` to submit forms — never include trailing newlines in `screen_type`.
 - Refuse anything that requires entering passwords, payment details, or sending messages unless the user typed those exact instructions in this turn.
@@ -60,6 +61,7 @@ class DesktopAgent(Agent):
         "screen_screenshot",
         "screen_zoom",
         "screen_wait",
+        "focus_window",
         # Pointer
         "screen_click",
         "screen_double_click",

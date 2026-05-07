@@ -23,6 +23,7 @@ from tools.desktop_actions import (
     ScreenScrollTool,
     ScreenTypeTool,
     ScreenKeyTool,
+    FocusWindowTool,
 )
 
 
@@ -73,4 +74,5 @@ REGISTRY = ToolRegistry([
     ScreenScrollTool(),
     ScreenTypeTool(),
     ScreenKeyTool(),
+    FocusWindowTool(),
 ])

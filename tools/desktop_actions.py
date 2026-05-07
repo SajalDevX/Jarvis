@@ -348,6 +348,52 @@ class ScreenTypeTool(Tool):
         return f"Typed {len(text)} chars."
 
 
+class FocusWindowTool(Tool):
+    name = "focus_window"
+    description = (
+        "Bring a window to the front and give it keyboard focus. Use BEFORE "
+        "clicking inside an app when active_window shows the wrong WM class "
+        "(e.g. a GNOME shell popup grabbed focus). Match by case-insensitive "
+        "substring of window title or WM_CLASS. Returns the new active window."
+    )
+    parameters = {
+        "type": "object",
+        "properties": {
+            "match": {
+                "type": "string",
+                "description": "Substring of window title or WM_CLASS (e.g. 'firefox', 'code', 'chrome').",
+            }
+        },
+        "required": ["match"],
+    }
+
+    def execute(self, match: str) -> str:
+        import shutil, subprocess
+        from vision.window_info import active_window_info, list_windows
+        if not shutil.which("wmctrl"):
+            return "wmctrl not installed"
+        target = match.strip().lower()
+        if not target:
+            return "Empty match string"
+        try:
+            wins = list_windows()
+        except Exception as e:
+            return f"list_windows failed: {e}"
+        for w in wins:
+            title = (w.get("title") or "").lower()
+            wid = w.get("id")
+            if wid and target in title:
+                try:
+                    subprocess.run(["wmctrl", "-ia", wid], check=False, timeout=2)
+                except Exception as e:
+                    return f"wmctrl failed: {e}"
+                time.sleep(0.25)
+                _post_action_capture(wait_ms=150)
+                info = active_window_info()
+                return f"Focused: {info.get('title','?')} (class={info.get('wm_class','?')})"
+        return f"No window matches {match!r}. Open the app first."
+
+
 class ScreenKeyTool(Tool):
     name = "screen_key"
     description = (
