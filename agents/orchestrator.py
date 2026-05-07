@@ -72,6 +72,42 @@ _DESKTOP_NAV_RE = re.compile(
     re.IGNORECASE,
 )
 
+# --- Phase 6 direct-dispatch: shell-mappable intents bypass LLM entirely. --- #
+
+_DIRECT_MEDIA_RE = re.compile(
+    r"^(?:please\s+)?"
+    r"(?P<action>play|pause|resume|stop|skip|next|previous|prev)"
+    r"(?:\s+(?:the\s+)?(?:music|song|track|video|media))?"
+    r"\s*[.!?]?$",
+    re.IGNORECASE,
+)
+
+# "mute", "unmute", "volume 30", "volume to 30%", "set volume to 30%"
+_DIRECT_VOLUME_RE = re.compile(
+    r"^(?:please\s+)?(?:set\s+(?:the\s+)?)?"
+    r"(?P<action>mute|unmute|volume(?:\s+(?:up|down|to)?)?(?:\s+(?:to|at))?)"
+    r"\s*(?P<pct>\d{1,3})?\s*%?\s*[.!?]?$",
+    re.IGNORECASE,
+)
+
+_DIRECT_WIFI_RE = re.compile(
+    r"^(?:please\s+)?(?:turn\s+)?(?:wifi|wi-fi|wireless)\s+(?P<state>on|off)\s*[.!?]?$",
+    re.IGNORECASE,
+)
+
+_DIRECT_BLUETOOTH_RE = re.compile(
+    r"^(?:please\s+)?(?:turn\s+)?bluetooth\s+(?P<state>on|off)\s*[.!?]?$",
+    re.IGNORECASE,
+)
+
+# Bare URL or "open <url>" / "go to <url>" → xdg_open. Fires before _DESKTOP_NAV_RE
+# so we don't burn an LLM round-trip on something xdg-open can do in 1ms.
+_DIRECT_URL_RE = re.compile(
+    r"^(?:please\s+)?(?:open|go\s+to|visit|browse\s+to|navigate\s+to|launch|load)\s+"
+    r"(?P<url>https?://\S+|\S+\.(?:com|org|net|io|dev|gg|co)(?:/\S*)?)\s*[.!?]?$",
+    re.IGNORECASE,
+)
+
 # Even tighter: zero-LLM path for "open <app>" / "launch <app>" / "start <app>".
 # Calls smart_open_app directly and returns a canned reply. Saves both router
 # AND agent LLM calls (~600-1500ms in voice mode).
@@ -221,6 +257,73 @@ class Orchestrator:
 
         return cb
 
+    def _try_shell_dispatch(self, user_input: str, wrapped_cb) -> tuple[str, str] | None:
+        """Phase 6: zero-LLM path for shell-mappable intents (media, volume,
+        wifi, bluetooth, url-open). Uses tools/cli_actions.py + xdg_open.
+        Returns (agent_name, reply) on hit, else None.
+        """
+        text = user_input.strip()
+        from tools.registry import REGISTRY
+
+        def fire(tool: str, args: dict, success_msg: str) -> tuple[str, str]:
+            result = REGISTRY.dispatch(tool, args)
+            log.info(f"Shell dispatch: {tool}({args!r}) -> {result[:80]}")
+            if wrapped_cb:
+                wrapped_cb(tool, args, result)
+            spoken = success_msg if not result.startswith(("REFUSED", "CliError")) else result
+            return self._mirror_and_return(user_input, spoken, "app_agent")
+
+        # 1. URL / website open via xdg-open
+        m = _DIRECT_URL_RE.match(text)
+        if m:
+            url = m.group("url")
+            if not url.startswith(("http://", "https://")):
+                url = "https://" + url
+            return fire("xdg_open", {"target": url}, f"Opened {url}, sir.")
+
+        # 2. Media (MPRIS)
+        m = _DIRECT_MEDIA_RE.match(text)
+        if m:
+            action = m.group("action").lower()
+            action = {"resume": "play", "skip": "next", "prev": "previous"}.get(action, action)
+            return fire("media_control", {"action": action}, f"{action.capitalize()}d, sir.")
+
+        # 3. Volume / mute
+        m = _DIRECT_VOLUME_RE.match(text)
+        if m:
+            action = m.group("action").lower().strip()
+            pct = m.group("pct")
+            if action == "mute":
+                return fire("volume_mute", {"state": True}, "Muted, sir.")
+            if action == "unmute":
+                return fire("volume_mute", {"state": False}, "Unmuted, sir.")
+            if pct is not None:
+                p = int(pct)
+                return fire("volume_set", {"percent": p}, f"Volume set to {p} percent, sir.")
+
+        # 4. Wi-Fi
+        m = _DIRECT_WIFI_RE.match(text)
+        if m:
+            state = m.group("state").lower()
+            return fire("wifi_toggle", {"state": state}, f"Wi-Fi {state}, sir.")
+
+        # 5. Bluetooth
+        m = _DIRECT_BLUETOOTH_RE.match(text)
+        if m:
+            state = m.group("state").lower()
+            return fire("bluetooth_toggle", {"state": state}, f"Bluetooth {state}, sir.")
+
+        return None
+
+    def _mirror_and_return(self, user_input: str, reply: str, agent_name: str) -> tuple[str, str]:
+        """Append turn to shared history and return."""
+        self.history.append({"role": "user", "content": user_input, "_agent": "orchestrator"})
+        self.history.append({"role": "assistant", "content": reply, "_agent": agent_name})
+        self._trim_history()
+        self._last_agent = self.agents.get(agent_name) or self._default
+        self._last_tier = "fast"
+        return agent_name, reply
+
     def _try_direct_dispatch(self, user_input: str, wrapped_cb) -> tuple[str, str] | None:
         """Pattern-match common 'open X' commands and run the tool synchronously.
         Returns (agent_name, reply) on success, else None to continue normal flow.
@@ -292,6 +395,12 @@ class Orchestrator:
     def handle(self, user_input: str, on_tool_call=None, voice: bool = False) -> tuple[str, str]:
         # Wrap callback for post-action hooks (auto-capture etc.)
         wrapped_cb = self._make_tool_callback(on_tool_call)
+
+        # 0a-pre. Phase 6 shell dispatch: media / volume / wifi / xdg-open URL.
+        if not (self._last_agent and _is_followup(user_input)):
+            shell = self._try_shell_dispatch(user_input, wrapped_cb)
+            if shell is not None:
+                return shell
 
         # 0a. Zero-LLM direct dispatch: "open <app>" / "launch <app>" → call tool, canned reply.
         if not (self._last_agent and _is_followup(user_input)):

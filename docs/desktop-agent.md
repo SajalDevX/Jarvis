@@ -32,51 +32,87 @@ export JARVIS_ALLOW_AUTOMATION=true
 > type anthropic.com then press enter
 ```
 
-## Architecture
+## Architecture (Phase 6: four-layer hybrid)
 
 ```
-User text: "click the green Login button"
+User text: "send a WhatsApp message to Sajal saying running late"
        │
        ▼
 Orchestrator
-  ├─ _DESKTOP_RE quick-classify (click|type|scroll|press|...) → desktop_agent
+  ├─ Shell direct-dispatch (~10ms): media / volume / wifi / xdg-open URL
+  ├─ App direct-dispatch (~1ms): smart_open_app for "open <app>"
+  ├─ _DESKTOP_RE / _DESKTOP_NAV_RE quick-classify → desktop_agent
   └─ Else → router LLM
        │
        ▼
 DesktopAgent (tier=vision, max_tool_rounds=30)
-  System prompt: ReAct loop, prompt-injection warning, persona
-  Tools per step:
-    1. ground_element(description) → {x, y, confidence}
-    2. screen_click / screen_type / screen_key / screen_scroll / ...
-    3. screen_screenshot auto-fires after each action; the next step sees the new state
+  System prompt teaches per-step layer priority (cheapest first):
+
+  ┌─ LAYER 1: CLI / D-Bus  (~10ms, no GUI)
+  │   media_control, volume_*, wifi_toggle, bluetooth_toggle, xdg_open,
+  │   window_resize/move, workspace_switch
+  │
+  ├─ LAYER 2: Browser via Playwright + CDP  (~200ms, web apps)
+  │   browser_list_profiles → browser_launch(profile) → browser_goto →
+  │   browser_snapshot (a11y tree) → browser_click / browser_type / browser_press
+  │
+  ├─ LAYER 3: AT-SPI accessibility  (~100ms, native GTK/Qt apps)
+  │   a11y_tree → a11y_find(role, name) → a11y_click / a11y_type
+  │
+  └─ LAYER 4: Vision + xdotool  (~2s, last resort)
+      take_screenshot → ground_element → screen_click / screen_type / focus_window
        │
        ▼
 AutomationGate (safety/automation.py)
   master switch → dry-run → allowlist → action budget → destructive proximity → execute
-       │
-       ▼
-Input (tools/desktop_input.py)
-  xdotool subprocess
 ```
 
-## Action vocabulary (Anthropic computer-use style)
+## Action vocabulary (40 tools across 4 layers)
 
+### Layer 1: CLI / D-Bus (cheapest, ~10ms, no GUI)
 | Tool | What it does |
 |---|---|
-| `ground_element(description)` | Locate UI element → returns `{x, y, confidence, reasoning}` |
-| `screen_click(x, y)` | Left click |
-| `screen_double_click(x, y)` | Double click |
-| `screen_right_click(x, y)` | Right click (context menu) |
-| `screen_mouse_move(x, y)` | Hover only, no click |
-| `screen_drag(x1, y1, x2, y2)` | Press, drag, release |
-| `screen_scroll(direction, amount)` | Wheel ticks: up / down / left / right |
-| `screen_type(text)` | Type literal text into focused widget |
-| `screen_key(combo)` | Single key or chord (`Return`, `Escape`, `ctrl+t`, `super+l`) |
-| `screen_zoom(x1, y1, x2, y2)` | Crop region for closer inspection / OCR |
-| `screen_wait(ms)` | Pause for animations / loads (max 5000) |
-| `screen_screenshot()` | Force-refresh capture |
+| `media_control(action)` | play / pause / next / prev / stop via MPRIS (Spotify, VLC, browsers) |
+| `volume_set(percent)` | wpctl set-volume |
+| `volume_mute(state)` | wpctl set-mute |
+| `wifi_toggle(state)` | nmcli radio wifi |
+| `bluetooth_toggle(state)` | bluetoothctl power |
+| `xdg_open(target)` | open URL or file with default app |
+| `window_resize / window_move` | wmctrl |
+| `workspace_switch(index)` | wmctrl -s |
 
-The agent always grounds (`ground_element`) before clicking. Never hard-codes coordinates.
+### Layer 2: Browser via Playwright + CDP (~200ms, web apps)
+| Tool | What it does |
+|---|---|
+| `browser_list_profiles()` | Enumerate Chrome profiles from `Local State` |
+| `browser_launch(profile, url?)` | Launch Chrome with `--remote-debugging-port` + chosen profile, attach |
+| `browser_attach(port?)` | Attach Playwright to running Chrome on port 9222 |
+| `browser_goto(url)` | Navigate active page |
+| `browser_snapshot()` | Page accessibility tree (find selectors) |
+| `browser_click(target)` | CSS / `role:Name` / visible text |
+| `browser_type(target, text)` | Fill a field |
+| `browser_press(key)` | Enter / Tab / Escape / arrows |
+| `browser_close()` | Detach (Chrome stays running) |
+
+### Layer 3: AT-SPI accessibility (~100ms, native apps, no cursor move)
+| Tool | What it does |
+|---|---|
+| `a11y_tree(app_match?)` | Dump role/name tree of focused or matched window |
+| `a11y_find(role, name, app_match?)` | Verify a widget exists |
+| `a11y_click(role, name)` | Send accessibility action — no cursor movement |
+| `a11y_type(role, name, text)` | Set widget text directly |
+
+### Layer 4: Vision + xdotool (~2s, fallback for canvas/Electron)
+| Tool | What it does |
+|---|---|
+| `ground_element(description)` | Gemini vision → pixel coords |
+| `screen_click / double_click / right_click` | xdotool mouse |
+| `screen_type / screen_key` | xdotool keyboard |
+| `screen_scroll / drag / mouse_move` | xdotool input |
+| `screen_zoom / screenshot / wait` | observation |
+| `focus_window(match)` | wmctrl -ia to bring app forward |
+
+The agent picks the cheapest layer that fits the intent. Vision is last resort.
 
 ## Safety model
 

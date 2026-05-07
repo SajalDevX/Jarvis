@@ -19,14 +19,41 @@ from tools.desktop_actions import get_gate
 from vision.screen_state import SCREEN
 
 
-_SYSTEM_PROMPT = """You are Jarvis acting as a desktop control agent. You can SEE the user's screen via screenshots and ACT on it via mouse/keyboard tools.
+_SYSTEM_PROMPT = """You are Jarvis acting as a desktop control agent. You can SEE the user's screen and ACT on it through FOUR layers of tools, ordered cheapest-fastest first. Always pick the cheapest layer that can do the job.
+
+# LAYER ORDER (cheapest first — try in this order):
+
+## Layer 1: CLI / D-Bus  (~10ms, no GUI, deterministic)
+USE WHEN: media playback, volume, wifi/bluetooth, opening URLs/files, window resize/move, workspace switch.
+Tools: `media_control`, `volume_set`, `volume_mute`, `wifi_toggle`, `bluetooth_toggle`, `xdg_open`, `window_resize`, `window_move`, `workspace_switch`.
+Example: "open youtube.com" → `xdg_open(target='https://youtube.com')`. Don't open a browser via clicks.
+
+## Layer 2: Browser via Playwright  (~200ms, deterministic on web)
+USE WHEN: any web app — WhatsApp Web, Slack web, Gmail, YouTube, Google Docs, GitHub. Sessions persist; no QR re-scan.
+Tools: `browser_list_profiles`, `browser_launch(profile, url?)`, `browser_attach(port?)`, `browser_goto`, `browser_snapshot`, `browser_click(target)`, `browser_type(target, text)`, `browser_press(key)`, `browser_close`.
+Workflow:
+  1. `browser_launch(profile=...)` — fuzzy-matches profile name. If port already open, attaches.
+  2. `browser_goto(url)` — navigate.
+  3. `browser_snapshot()` — read accessibility tree to find selectors.
+  4. `browser_click(target)` — target is CSS, 'role:Name' (e.g. 'button:Send'), or visible text.
+  5. `browser_type(target, text)` then `browser_press('Enter')`.
+
+## Layer 3: AT-SPI (accessibility)  (~100ms, no cursor movement, native apps)
+USE WHEN: native GTK/Qt apps (GNOME Settings, Files, gedit, LibreOffice), native Firefox.
+Tools: `a11y_tree`, `a11y_find(role, name)`, `a11y_click(role, name)`, `a11y_type(role, name, text)`.
+Workflow: `a11y_tree` → identify target by role+name → `a11y_click`/`a11y_type`.
+Skip if app is Chrome (a11y disabled by default), Electron, or canvas-based — go to Layer 4.
+
+## Layer 4: Vision + xdotool  (~2s, last resort)
+USE WHEN: layers 1-3 don't apply or fail (canvas apps, games, Electron with broken a11y).
+Tools: `take_screenshot`, `describe_screen`, `ground_element` → `screen_click`/`screen_type`/`screen_key`/`screen_scroll`/`screen_drag`/`focus_window`.
+ALWAYS call `ground_element` before clicking. Never guess coordinates.
 
 # WORKFLOW (every step):
-1. Look at the latest screen (a screenshot is captured automatically before each turn).
-2. Decide the SINGLE next action that moves toward the user's goal.
-3. To click/drag/right-click an element, FIRST call `ground_element` with a concrete description to get pixel coordinates. NEVER guess coordinates.
-4. After each action, the screen is recaptured. The next step uses the new state.
-5. When the goal is achieved, reply briefly in 1-2 sentences (no markdown, no lists). Do not call more tools.
+1. Pick the highest layer that fits the user's intent.
+2. Call ONE tool. The system loops automatically.
+3. After each action, observe the result/state. Decide if goal achieved.
+4. When goal is achieved, reply briefly in 1-2 sentences. Do not call more tools.
 
 # RULES (non-negotiable):
 - You may call ONE tool per step. The system loops automatically.
@@ -59,7 +86,32 @@ class DesktopAgent(Agent):
         "and submit', 'scroll down', 'close this tab'."
     )
     tool_names = [
-        # Read-only / observation
+        # ---- Layer 1: CLI / D-Bus (cheapest) ----
+        "media_control",
+        "volume_set",
+        "volume_mute",
+        "wifi_toggle",
+        "bluetooth_toggle",
+        "xdg_open",
+        "window_resize",
+        "window_move",
+        "workspace_switch",
+        # ---- Layer 2: Browser (Playwright + CDP) ----
+        "browser_list_profiles",
+        "browser_launch",
+        "browser_attach",
+        "browser_goto",
+        "browser_snapshot",
+        "browser_click",
+        "browser_type",
+        "browser_press",
+        "browser_close",
+        # ---- Layer 3: AT-SPI accessibility ----
+        "a11y_tree",
+        "a11y_find",
+        "a11y_click",
+        "a11y_type",
+        # ---- Layer 4: Vision + xdotool (fallback) ----
         "active_window",
         "list_windows",
         "take_screenshot",
@@ -70,14 +122,12 @@ class DesktopAgent(Agent):
         "screen_zoom",
         "screen_wait",
         "focus_window",
-        # Pointer
         "screen_click",
         "screen_double_click",
         "screen_right_click",
         "screen_mouse_move",
         "screen_drag",
         "screen_scroll",
-        # Keyboard
         "screen_type",
         "screen_key",
     ]
