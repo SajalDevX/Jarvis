@@ -57,7 +57,11 @@ def chat(
         messages = _attach_images(messages, image_paths)
 
     if is_online():
-        from config import OPENROUTER_API_KEY
+        from config import OPENROUTER_API_KEY, GROQ_API_KEY, GROQ_LLM_MODEL
+        # Fast tiers → Groq (LPU, ~250ms TTFT) when key set. Llama 8B is text-only,
+        # so vision and tool-heavy smart/power tiers stay on OpenRouter.
+        if GROQ_API_KEY and tier in ("nano", "fast") and not image_paths:
+            return _chat_groq(messages, tools or [], GROQ_LLM_MODEL, max_tokens)
         if OPENROUTER_API_KEY:
             return _chat_openrouter(messages, tools or [], model, max_tokens)
 
@@ -157,6 +161,67 @@ def _chat_openrouter(
     raw_tool_calls = msg.get("tool_calls") or []
 
     log.debug(f"OpenRouter resp: content_len={len(reply)}, tools={len(raw_tool_calls)}")
+
+    tool_calls = [
+        {
+            "id": tc.get("id", ""),
+            "function": {
+                "name": tc["function"]["name"],
+                "arguments": tc["function"]["arguments"],
+            },
+        }
+        for tc in raw_tool_calls
+    ]
+
+    return reply.strip(), tool_calls, msg
+
+
+def _chat_groq(
+    messages: list,
+    tools: list,
+    model: str,
+    max_tokens: int,
+) -> tuple[str, list, dict]:
+    from config import GROQ_API_KEY, GROQ_LLM_URL
+
+    log.debug(f"Groq req: model={model}, msgs={len(messages)}, tools={len(tools)}, max_tokens={max_tokens}")
+
+    body = {
+        "model": model,
+        "messages": messages,
+        "stream": False,
+        "max_tokens": max_tokens,
+    }
+    if tools:
+        body["tools"] = tools
+
+    req = urllib.request.Request(
+        GROQ_LLM_URL,
+        data=json.dumps(body).encode(),
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=60) as resp:
+            data = json.loads(resp.read())
+    except urllib.error.HTTPError as e:
+        body_err = e.read().decode()
+        log.error(f"Groq HTTP {e.code}: {body_err}")
+        raise ConnectionError(f"Groq {e.code}: {body_err}") from e
+    except urllib.error.URLError as e:
+        log.error(f"Groq URL error: {e}")
+        raise ConnectionError(f"Groq error: {e}") from e
+
+    choice = data.get("choices", [{}])[0]
+    msg = choice.get("message", {})
+    reply = msg.get("content") or ""
+    raw_tool_calls = msg.get("tool_calls") or []
+
+    log.debug(f"Groq resp: content_len={len(reply)}, tools={len(raw_tool_calls)}")
 
     tool_calls = [
         {

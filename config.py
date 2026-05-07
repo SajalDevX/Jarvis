@@ -19,6 +19,13 @@ OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "")
 OPENROUTER_MODEL = os.environ.get("OPENROUTER_MODEL", "google/gemini-2.5-flash-lite")  # default fast model
 OPENROUTER_URL = "https://openrouter.ai/api/v1/chat/completions"
 
+# Groq (fastest LPU inference, OpenAI-compatible). Used for nano/fast tiers + STT.
+GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "")
+GROQ_LLM_MODEL = os.environ.get("GROQ_LLM_MODEL", "llama-3.1-8b-instant")
+GROQ_STT_MODEL = os.environ.get("GROQ_STT_MODEL", "whisper-large-v3-turbo")
+GROQ_LLM_URL = "https://api.groq.com/openai/v1/chat/completions"
+GROQ_STT_URL = "https://api.groq.com/openai/v1/audio/transcriptions"
+
 # Tiered model registry — pick model based on task complexity
 TIER_MODELS_ONLINE = {
     "nano":   os.environ.get("JARVIS_TIER_NANO",   "google/gemini-2.5-flash-lite"),
