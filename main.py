@@ -53,12 +53,24 @@ def main():
     orchestrator = Orchestrator()
     on_tool = make_tool_callback()
 
-    # Voice mode: hand off to VoiceRuntime instead of text loop
+    # Voice mode: hand off to a voice runtime instead of text loop.
+    # Pipecat path (sub-second target) requires Groq + ElevenLabs + online.
+    # Otherwise fall back to the legacy capture/STT/TTS loop.
     if voice_mode != "off":
-        from voice.runtime import VoiceRuntime
-        rt = VoiceRuntime(orchestrator, mode=voice_mode)
+        use_pipecat = (
+            online
+            and bool(config.GROQ_API_KEY)
+            and bool(config.ELEVENLABS_API_KEY)
+        )
         try:
-            rt.run(console=console)
+            if use_pipecat:
+                console.print("[dim]Voice runtime: [bold green]pipecat[/bold green] (Groq STT + Groq LLM + ElevenLabs WS TTS)[/dim]")
+                from voice.pipecat_runtime import PipecatVoiceRuntime
+                PipecatVoiceRuntime(orchestrator, console=console).run()
+            else:
+                console.print("[dim]Voice runtime: [yellow]legacy[/yellow] (offline / missing keys)[/dim]")
+                from voice.runtime import VoiceRuntime
+                VoiceRuntime(orchestrator, mode=voice_mode).run(console=console)
         except KeyboardInterrupt:
             console.print("\n[dim]Bye.[/dim]")
         return
