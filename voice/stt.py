@@ -6,6 +6,7 @@ import io
 from logger import log
 
 _FW_MODEL = None  # lazy-loaded faster-whisper instance
+_OAI_CLIENT = None  # cached OpenAI client
 
 
 def transcribe(wav_bytes: bytes, language: str | None = None) -> str:
@@ -26,10 +27,13 @@ def transcribe(wav_bytes: bytes, language: str | None = None) -> str:
 
 
 def _whisper_api(wav_bytes: bytes, language: str | None) -> str:
+    global _OAI_CLIENT
     from openai import OpenAI
     from config import OPENAI_API_KEY
 
-    client = OpenAI(api_key=OPENAI_API_KEY)
+    if _OAI_CLIENT is None:
+        _OAI_CLIENT = OpenAI(api_key=OPENAI_API_KEY)
+    client = _OAI_CLIENT
     fp = io.BytesIO(wav_bytes)
     fp.name = "audio.wav"
 

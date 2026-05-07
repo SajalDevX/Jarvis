@@ -17,9 +17,9 @@ FRAME_SAMPLES = SAMPLE_RATE * FRAME_MS // 1000  # 480 @ 16k
 
 
 def record_until_silence(
-    silence_ms: int = 600,
-    max_seconds: int = 20,
-    vad_aggressiveness: int = 2,
+    silence_ms: int = 700,
+    max_seconds: int = 10,
+    vad_aggressiveness: int = 3,
 ) -> bytes:
     """Block until user speaks then stops.
 
