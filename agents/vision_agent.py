@@ -69,7 +69,7 @@ class VisionAgent(Agent):
         "Be concise."
     )
 
-    def run(self, user_input, history, on_tool_call=None, tier_override=None):
+    def run(self, user_input, history, on_tool_call=None, tier_override=None, voice=False):
         """Try fast-path direct dispatch first; fall back to LLM agent loop."""
         direct = self._try_direct(user_input, on_tool_call)
         if direct is not None:
@@ -80,7 +80,7 @@ class VisionAgent(Agent):
             ]
 
         # No shortcut matched — let the model decide
-        return super().run(user_input, history, on_tool_call=on_tool_call, tier_override=tier_override)
+        return super().run(user_input, history, on_tool_call=on_tool_call, tier_override=tier_override, voice=voice)
 
     def _try_direct(self, user_input: str, on_tool_call):
         """Return tool-result reply if the input matches a known pattern, else None."""

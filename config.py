@@ -40,6 +40,18 @@ TIER_MAX_TOKENS = {
     "vision": 1024,
 }
 
+# Voice mode
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY", "")
+ELEVENLABS_API_KEY = os.environ.get("ELEVENLABS_API_KEY", "")
+ELEVENLABS_VOICE_ID = os.environ.get("ELEVENLABS_VOICE_ID", "21m00Tcm4TlvDq8ikWAM")  # Rachel default
+ELEVENLABS_MODEL = os.environ.get("ELEVENLABS_MODEL", "eleven_flash_v2_5")  # fastest streaming
+JARVIS_VOICE_MODE = os.environ.get("JARVIS_VOICE_MODE", "off")  # off | hotkey | wake | both
+JARVIS_HOTKEY = os.environ.get("JARVIS_HOTKEY", "<ctrl>+<space>")
+JARVIS_WAKE_MODEL = os.environ.get("JARVIS_WAKE_MODEL", "hey_jarvis_v0.1")
+JARVIS_VOICE_LANG = os.environ.get("JARVIS_VOICE_LANG", "en")
+JARVIS_VAD_SILENCE_MS = int(os.environ.get("JARVIS_VAD_SILENCE_MS", "600"))
+
+
 SYSTEM_PROMPT = (
     "You are Jarvis, a desktop assistant running on Linux. "
     "When the user asks to open an application, follow these steps WITHOUT asking permission first:\n"

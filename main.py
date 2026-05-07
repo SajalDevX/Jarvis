@@ -20,11 +20,20 @@ def make_tool_callback():
     return cb
 
 
-def main():
-    if len(sys.argv) > 1:
-        config.MODEL = sys.argv[1]
+def _parse_voice_mode(argv: list[str]) -> str:
+    """CLI flag --voice {off|hotkey|wake|both} overrides JARVIS_VOICE_MODE env."""
+    for i, a in enumerate(argv):
+        if a == "--voice" and i + 1 < len(argv):
+            return argv[i + 1]
+        if a.startswith("--voice="):
+            return a.split("=", 1)[1]
+    return config.JARVIS_VOICE_MODE
 
-    log.info(f"Jarvis starting — offline={config.MODEL}, online={config.OPENROUTER_MODEL}")
+
+def main():
+    voice_mode = _parse_voice_mode(sys.argv[1:])
+
+    log.info(f"Jarvis starting — offline={config.MODEL}, online={config.OPENROUTER_MODEL}, voice={voice_mode}")
 
     online = is_online()
     mode = (
@@ -32,9 +41,10 @@ def main():
         if online else f"[yellow]offline[/yellow] → {config.MODEL}"
     )
 
+    voice_label = f"[magenta]voice:{voice_mode}[/magenta]" if voice_mode != "off" else "[dim]text only[/dim]"
     console.print(Panel(
         f"[bold cyan]Jarvis CLI[/bold cyan]\n"
-        f"[dim]Mode: {mode}[/dim]\n"
+        f"[dim]Mode: {mode}[/dim]   {voice_label}\n"
         f"[dim]Logs → {LOG_FILE}[/dim]\n"
         "[dim]Ctrl+C to exit. /reset to clear history.[/dim]",
         expand=False,
@@ -42,6 +52,16 @@ def main():
 
     orchestrator = Orchestrator()
     on_tool = make_tool_callback()
+
+    # Voice mode: hand off to VoiceRuntime instead of text loop
+    if voice_mode != "off":
+        from voice.runtime import VoiceRuntime
+        rt = VoiceRuntime(orchestrator, mode=voice_mode)
+        try:
+            rt.run(console=console)
+        except KeyboardInterrupt:
+            console.print("\n[dim]Bye.[/dim]")
+        return
 
     while True:
         try:

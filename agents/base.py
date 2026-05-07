@@ -26,12 +26,19 @@ class Agent(ABC):
     def tools_schema(self) -> list[dict]:
         return REGISTRY.schemas(self.tool_names)
 
+    VOICE_ADDENDUM = (
+        "\n\nIMPORTANT: The user is hearing your reply via TTS. Reply in 1-2 short "
+        "natural sentences. No markdown, no parentheticals like '(PID 123)', no code, "
+        "no lists. Speak like a real assistant on a phone call."
+    )
+
     def run(
         self,
         user_input: str,
         history: list[dict],
         on_tool_call=None,
         tier_override: str | None = None,
+        voice: bool = False,
     ) -> tuple[str, list[dict]]:
         """Run a single user turn against the shared history.
 
@@ -49,9 +56,11 @@ class Agent(ABC):
         active_tier = tier_override or self.tier
         log.info(f"[{self.name}] User: {user_input} (tier={active_tier})")
 
+        sys_prompt = self.system_prompt + (self.VOICE_ADDENDUM if voice else "")
+
         new_turn: list[dict] = [{"role": "user", "content": user_input}]
         full_messages: list[dict] = (
-            [{"role": "system", "content": self.system_prompt}]
+            [{"role": "system", "content": sys_prompt}]
             + history
             + new_turn
         )

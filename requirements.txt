@@ -2,3 +2,14 @@ rich
 mss
 pillow
 pytesseract
+
+# Voice mode
+openai
+elevenlabs
+sounddevice
+numpy
+webrtcvad-wheels
+pynput
+# Optional offline / wake-word
+openwakeword
+faster-whisper
