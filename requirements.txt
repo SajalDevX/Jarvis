@@ -13,3 +13,8 @@ pynput
 # Optional offline / wake-word
 openwakeword
 faster-whisper
+
+# Sub-second voice pipeline (Phase 4)
+pipecat-ai[silero,elevenlabs,local]
+groq
+httpx

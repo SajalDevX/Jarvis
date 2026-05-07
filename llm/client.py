@@ -57,7 +57,18 @@ def chat(
         messages = _attach_images(messages, image_paths)
 
     if is_online():
-        from config import OPENROUTER_API_KEY
+        from config import OPENROUTER_API_KEY, GROQ_API_KEY, GROQ_LLM_MODEL
+        # Groq Llama 3.1 8B is fast (~250ms TTFT) but unreliable at tool calls —
+        # it hallucinates replies instead of emitting tool_calls. So route to
+        # Groq only for text-only nano/fast (router, chat). Tool-using turns
+        # and vision stay on OpenRouter (Gemini).
+        if (
+            GROQ_API_KEY
+            and tier in ("nano", "fast")
+            and not image_paths
+            and not tools
+        ):
+            return _chat_groq(messages, [], GROQ_LLM_MODEL, max_tokens)
         if OPENROUTER_API_KEY:
             return _chat_openrouter(messages, tools or [], model, max_tokens)
 
@@ -170,6 +181,77 @@ def _chat_openrouter(
     ]
 
     return reply.strip(), tool_calls, msg
+
+
+_GROQ_CLIENT = None
+
+
+def _chat_groq(
+    messages: list,
+    tools: list,
+    model: str,
+    max_tokens: int,
+) -> tuple[str, list, dict]:
+    """Call Groq via the official SDK (handles UA / Cloudflare correctly).
+
+    urllib gets 403 error 1010 from Cloudflare due to its default User-Agent;
+    the SDK uses httpx + a proper UA and works.
+    """
+    global _GROQ_CLIENT
+    from config import GROQ_API_KEY
+
+    log.debug(f"Groq req: model={model}, msgs={len(messages)}, tools={len(tools)}, max_tokens={max_tokens}")
+
+    if _GROQ_CLIENT is None:
+        from groq import Groq
+        _GROQ_CLIENT = Groq(api_key=GROQ_API_KEY)
+
+    kwargs = {
+        "model": model,
+        "messages": messages,
+        "stream": False,
+        "max_tokens": max_tokens,
+    }
+    if tools:
+        kwargs["tools"] = tools
+
+    try:
+        resp = _GROQ_CLIENT.chat.completions.create(**kwargs)
+    except Exception as e:
+        log.error(f"Groq SDK error: {e}")
+        raise ConnectionError(f"Groq error: {e}") from e
+
+    msg_obj = resp.choices[0].message
+    reply = msg_obj.content or ""
+    raw_tool_calls = msg_obj.tool_calls or []
+
+    log.debug(f"Groq resp: content_len={len(reply)}, tools={len(raw_tool_calls)}")
+
+    tool_calls = [
+        {
+            "id": tc.id,
+            "function": {
+                "name": tc.function.name,
+                "arguments": tc.function.arguments,
+            },
+        }
+        for tc in raw_tool_calls
+    ]
+
+    msg_dict = {
+        "role": msg_obj.role,
+        "content": reply,
+        "tool_calls": [
+            {
+                "id": tc.id,
+                "type": "function",
+                "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+            }
+            for tc in raw_tool_calls
+        ] if raw_tool_calls else None,
+    }
+
+    return reply.strip(), tool_calls, msg_dict
 
 
 def _chat_ollama(messages: list, tools: list, model: str) -> tuple[str, list, dict]:

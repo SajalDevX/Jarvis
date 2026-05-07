@@ -47,6 +47,21 @@ _APP_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Even tighter: zero-LLM path for "open <app>" / "launch <app>" / "start <app>".
+# Calls smart_open_app directly and returns a canned reply. Saves both router
+# AND agent LLM calls (~600-1500ms in voice mode).
+_DIRECT_OPEN_RE = re.compile(
+    r"^(?:"
+    r"(?:can|could|would|will)\s+you\s+(?:please\s+)?|"
+    r"(?:please\s+)?"
+    r")?"
+    r"(?:open|launch|start|run)\s+"
+    r"(.+?)"
+    r"(?:\s+(?:for|please)\s+(?:me|us))?"
+    r"\s*[.!?]?$",
+    re.IGNORECASE,
+)
+
 
 def _quick_classify(text: str) -> tuple[str, str] | None:
     """Pattern-only routing for unambiguous intents. None means 'use the LLM router'."""
@@ -171,9 +186,68 @@ class Orchestrator:
 
         return cb
 
+    def _try_direct_dispatch(self, user_input: str, wrapped_cb) -> tuple[str, str] | None:
+        """Pattern-match common 'open X' commands and run the tool synchronously.
+        Returns (agent_name, reply) on success, else None to continue normal flow.
+        """
+        m = _DIRECT_OPEN_RE.match(user_input.strip())
+        if not m:
+            return None
+        target = m.group(1).strip()
+        # Trim trailing politeness + STT artifacts ("Amen" / "thanks" / "now" / etc.)
+        # Loop because input like "text editor now thanks" has two trailing tokens.
+        _trail = re.compile(
+            r"[?,.!\s]*\b(please|now|already|right now|amen|thanks|thank you|"
+            r"for me|for us|man|bro|dude|too|also|pal|buddy)\b[?,.!\s]*$",
+            re.IGNORECASE,
+        )
+        while True:
+            stripped = _trail.sub("", target).strip(" ?,.!")
+            if stripped == target:
+                break
+            target = stripped
+        # Skip obviously non-app phrases like "open the door", "open up"
+        if not target or target.lower() in {"up", "the door", "it", "this", "that"}:
+            return None
+        from tools.registry import REGISTRY
+        try:
+            result = REGISTRY.dispatch("smart_open_app", {"query": target})
+        except Exception as e:
+            log.warning(f"direct dispatch failed for '{target}': {e}")
+            return None
+        # Tool returns "Opened <name>." on success or an error/ambiguity string.
+        # Only short-circuit when the tool clearly succeeded — else fall through
+        # so the LLM can clarify ambiguity.
+        if not result.startswith("Opened"):
+            log.debug(f"direct dispatch ambiguous → fallthrough: {result!r}")
+            return None
+        log.info(f"Direct dispatch: smart_open_app({target!r}) → no LLM")
+        if wrapped_cb:
+            try:
+                wrapped_cb("smart_open_app", {"query": target}, result)
+            except Exception as e:
+                log.warning(f"direct-dispatch tool callback failed: {e}")
+        # Voice-friendly reply: strip "(PID 12345)" parenthetical, drop "Opened "
+        # prefix, format as "<App> is open, sir." for natural speech.
+        spoken_app = re.sub(r"\s*\(PID\s+\d+\)\s*$", "", result).removeprefix("Opened ").rstrip(".")
+        spoken = f"{spoken_app} is open, sir." if spoken_app else result
+        # Mirror in shared history so vision/follow-ups see the action
+        self.history.append({"role": "user", "content": user_input, "_agent": "orchestrator"})
+        self.history.append({"role": "assistant", "content": spoken, "_agent": "app_agent"})
+        self._trim_history()
+        self._last_agent = self.agents.get("app_agent") or self._default
+        self._last_tier = "fast"
+        return "app_agent", spoken
+
     def handle(self, user_input: str, on_tool_call=None, voice: bool = False) -> tuple[str, str]:
         # Wrap callback for post-action hooks (auto-capture etc.)
         wrapped_cb = self._make_tool_callback(on_tool_call)
+
+        # 0a. Zero-LLM direct dispatch: "open <app>" / "launch <app>" → call tool, canned reply.
+        if not (self._last_agent and _is_followup(user_input)):
+            direct = self._try_direct_dispatch(user_input, wrapped_cb)
+            if direct is not None:
+                return direct
 
         # 0. Sticky: short follow-up reuses prior agent
         if self._last_agent and _is_followup(user_input):
