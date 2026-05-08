@@ -71,6 +71,12 @@ JARVIS_AUTOMATION_CONFIRM_PHRASE = os.environ.get(
     "JARVIS_AUTOMATION_CONFIRM_PHRASE", "yes do it"
 )
 
+# Phase 6: hybrid action layers
+JARVIS_CHROME_DEBUG_PORT = int(os.environ.get("JARVIS_CHROME_DEBUG_PORT", "9222"))
+JARVIS_CHROME_USER_DATA_DIR = os.environ.get(
+    "JARVIS_CHROME_USER_DATA_DIR", "~/.config/google-chrome"
+)
+
 
 SYSTEM_PROMPT = (
     "You are Jarvis, a desktop assistant running on Linux. "

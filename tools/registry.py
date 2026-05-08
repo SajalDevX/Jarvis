@@ -25,6 +25,34 @@ from tools.desktop_actions import (
     ScreenKeyTool,
     FocusWindowTool,
 )
+from tools.cli_actions import (
+    MediaControlTool,
+    VolumeSetTool,
+    VolumeMuteTool,
+    WifiToggleTool,
+    BluetoothToggleTool,
+    XdgOpenTool,
+    WindowResizeTool,
+    WindowMoveTool,
+    WorkspaceSwitchTool,
+)
+from tools.a11y import (
+    A11yTreeTool,
+    A11yFindTool,
+    A11yClickTool,
+    A11yTypeTool,
+)
+from tools.browser import (
+    BrowserListProfilesTool,
+    BrowserLaunchTool,
+    BrowserAttachTool,
+    BrowserGotoTool,
+    BrowserClickTool,
+    BrowserTypeTool,
+    BrowserPressTool,
+    BrowserSnapshotTool,
+    BrowserCloseTool,
+)
 
 
 class ToolRegistry:
@@ -75,4 +103,29 @@ REGISTRY = ToolRegistry([
     ScreenTypeTool(),
     ScreenKeyTool(),
     FocusWindowTool(),
+    # Phase 6: CLI / D-Bus action layer (fastest)
+    MediaControlTool(),
+    VolumeSetTool(),
+    VolumeMuteTool(),
+    WifiToggleTool(),
+    BluetoothToggleTool(),
+    XdgOpenTool(),
+    WindowResizeTool(),
+    WindowMoveTool(),
+    WorkspaceSwitchTool(),
+    # Phase 6: AT-SPI accessibility layer
+    A11yTreeTool(),
+    A11yFindTool(),
+    A11yClickTool(),
+    A11yTypeTool(),
+    # Phase 6: browser layer (Playwright + CDP)
+    BrowserListProfilesTool(),
+    BrowserLaunchTool(),
+    BrowserAttachTool(),
+    BrowserGotoTool(),
+    BrowserClickTool(),
+    BrowserTypeTool(),
+    BrowserPressTool(),
+    BrowserSnapshotTool(),
+    BrowserCloseTool(),
 ])

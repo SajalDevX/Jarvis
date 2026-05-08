@@ -18,3 +18,7 @@ faster-whisper
 pipecat-ai[silero,elevenlabs,local]
 groq
 httpx
+
+# Phase 6: hybrid action layers
+playwright
+dogtail

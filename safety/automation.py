@@ -36,6 +36,12 @@ _READ_ONLY_TOOLS = {
     "screen_wait",
     "screen_mouse_move",   # cursor move alone is non-destructive
     "ground_element",
+    # Phase 6 read-only
+    "a11y_tree",
+    "a11y_find",
+    "browser_list_profiles",
+    "browser_snapshot",
+    "browser_close",
 }
 
 
