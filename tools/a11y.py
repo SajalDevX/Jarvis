@@ -74,13 +74,17 @@ def _find_app_by_match(match: str):
     return None
 
 
-def _summarize_node(node, max_children: int = 50) -> dict:
-    """Walk down a few levels, return a compact dict the LLM can read."""
+def _summarize_node(node, max_children: int = 200, max_depth: int = 8) -> dict:
+    """Walk the a11y tree, return a compact dict the LLM can read.
+
+    Deeper than the original to expose inner text/entry widgets in apps like
+    gnome-text-editor where the editable area lives 5-7 levels under the frame.
+    """
     seen = 0
 
     def walk(n, depth: int = 0):
         nonlocal seen
-        if depth > 4 or seen >= max_children:
+        if depth > max_depth or seen >= max_children:
             return None
         seen += 1
         try:
@@ -90,7 +94,7 @@ def _summarize_node(node, max_children: int = 50) -> dict:
             }
             children = []
             try:
-                kids = list(n.children)[:max_children - seen]
+                kids = list(n.children)[: max(0, max_children - seen)]
             except Exception:
                 kids = []
             for c in kids:
@@ -104,6 +108,34 @@ def _summarize_node(node, max_children: int = 50) -> dict:
             return None
 
     return walk(node) or {}
+
+
+def _find_widget(root_node, role: str, name: str):
+    """Find a widget. If name is empty, fall back to first widget of that role.
+    For text-entry roles, accept multiple aliases ('text', 'entry', 'document text', ...).
+    """
+    target_role = role.lower().strip()
+    target_name = name.lower().strip()
+
+    # Aliases for "text input" widgets — some toolkits use 'text', others 'entry'.
+    role_aliases = {
+        "entry": {"entry", "text", "password text", "document text", "text-area"},
+        "text": {"text", "entry", "document text", "text-area"},
+    }.get(target_role, {target_role})
+
+    def role_match(x) -> bool:
+        rn = (x.roleName or "").lower()
+        return rn == target_role or rn in role_aliases
+
+    if target_name:
+        matches = root_node.findChildren(
+            lambda x: role_match(x) and target_name in (x.name or "").lower()
+        )
+        if matches:
+            return matches[0]
+        # Name miss → relax to role-only
+    matches = root_node.findChildren(role_match)
+    return matches[0] if matches else None
 
 
 # --------------------------------------------------------------------------- #
@@ -240,20 +272,14 @@ class A11yClickTool(Tool):
                 root_node = _focused_window()
                 if root_node is None:
                     return "No focused window via AT-SPI"
-            target_role = role.lower().strip()
-            target_name = name.lower().strip()
-            matches = root_node.findChildren(
-                lambda x: (x.roleName or "").lower() == target_role
-                and target_name in (x.name or "").lower()
-            )
-            if not matches:
-                return f"a11y_click: no {role}={name!r}"
-            n = matches[0]
+            n = _find_widget(root_node, role, name)
+            if n is None:
+                return f"a11y_click MISS: no {role}={name!r}. Falling back to vision recommended."
             n.click()  # dogtail wraps action 'click'
-            log.info(f"a11y_click: {role}={name!r}")
+            log.info(f"a11y_click: {role}={n.name!r}")
             return f"Clicked {role}={n.name!r} via AT-SPI"
         except Exception as e:
-            return f"a11y_click error: {e}"
+            return f"a11y_click error: {e}. Falling back to vision recommended."
 
 
 class A11yTypeTool(Tool):
@@ -291,24 +317,33 @@ class A11yTypeTool(Tool):
                 root_node = _focused_window()
                 if root_node is None:
                     return "No focused window via AT-SPI"
-            target_role = role.lower().strip()
-            target_name = name.lower().strip()
-            matches = root_node.findChildren(
-                lambda x: (x.roleName or "").lower() == target_role
-                and target_name in (x.name or "").lower()
-            )
-            if not matches:
-                return f"a11y_type: no {role}={name!r}"
-            n = matches[0]
+            n = _find_widget(root_node, role, name)
+            if n is None:
+                return f"a11y_type MISS: no {role}={name!r}. Falling back to vision recommended."
+            # Try three strategies in order:
+            #   1. dogtail's .text setter (atomic, fast)
+            #   2. grabFocus + typeText (synthesized keystrokes — works on text-views)
+            #   3. doActionNamed("activate") + typeText fallback
+            errors = []
             try:
-                n.text = text  # dogtail setter
+                n.text = text
+                log.info(f"a11y_type (.text): {role}={n.name!r} <- {len(text)} chars")
+                return f"Typed {len(text)} chars into {role}={n.name!r}"
             except Exception as e:
-                # Some widgets need typeText() (synthesized keystrokes)
+                errors.append(f".text={e}")
+            try:
                 try:
-                    n.typeText(text)
-                except Exception as e2:
-                    return f"a11y_type both methods failed: text={e} | typeText={e2}"
-            log.info(f"a11y_type: {role}={name!r} <- {len(text)} chars")
-            return f"Typed {len(text)} chars into {role}={n.name!r}"
+                    n.grabFocus()
+                except Exception:
+                    pass
+                n.typeText(text)
+                log.info(f"a11y_type (typeText): {role}={n.name!r} <- {len(text)} chars")
+                return f"Typed {len(text)} chars into {role}={n.name!r} via typeText"
+            except Exception as e:
+                errors.append(f"typeText={e}")
+            return (
+                f"a11y_type all strategies failed for {role}={name!r}: "
+                f"{' | '.join(errors)}. Falling back to vision recommended."
+            )
         except Exception as e:
-            return f"a11y_type error: {e}"
+            return f"a11y_type error: {e}. Falling back to vision recommended."
