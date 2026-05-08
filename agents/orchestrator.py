@@ -6,6 +6,7 @@ import time
 from agents.base import Agent
 from agents.app_agent import AppAgent
 from agents.chat_agent import ChatAgent
+from agents.desktop_agent import DesktopAgent
 from agents.router import RouterAgent
 from agents.vision_agent import VisionAgent
 from cache.intent_cache import IntentCache
@@ -47,6 +48,30 @@ _APP_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Imperative UI control verbs → desktop_agent. Excludes "open/launch <app>" which
+# direct-dispatch handles atomically. Matches text starting with the verb so
+# "click the login button" routes correctly.
+_DESKTOP_RE = re.compile(
+    r"^(click|tap|double[-\s]?click|right[-\s]?click|press|type|paste|enter|"
+    r"select|highlight|drag|scroll|swipe|fill\s+in|fill\s+out|submit|hit|"
+    r"focus|switch\s+to|navigate\s+to|go\s+to|visit|browse\s+to|"
+    r"move\s+(?:cursor|mouse))\b",
+    re.IGNORECASE,
+)
+
+# Navigation intent (URL / website / "open X in browser") → desktop_agent.
+# Distinct from _DESKTOP_RE because the verb is still "open", which would
+# otherwise hit the app-launcher path.
+_DESKTOP_NAV_RE = re.compile(
+    r"^\s*(?:open|launch|load|pull\s+up|bring\s+up|fire\s+up)\b.*"
+    r"(?:\b(?:in|on|via|with|within|inside)\s+(?:firefox|chrome|chromium|browser|safari|edge|brave|opera)\b"
+    r"|\b(?:website|webpage|web\s+page|site|url|tab)\b"
+    r"|\b(?:youtube|google\.com|github\.com|gmail|reddit)\b"
+    r"|\.(?:com|org|net|io|dev)\b"
+    r"|https?://)",
+    re.IGNORECASE,
+)
+
 # Even tighter: zero-LLM path for "open <app>" / "launch <app>" / "start <app>".
 # Calls smart_open_app directly and returns a canned reply. Saves both router
 # AND agent LLM calls (~600-1500ms in voice mode).
@@ -66,10 +91,19 @@ _DIRECT_OPEN_RE = re.compile(
 def _quick_classify(text: str) -> tuple[str, str] | None:
     """Pattern-only routing for unambiguous intents. None means 'use the LLM router'."""
     t = text.strip()
-    if _VISION_RE.search(t):
-        return "vision_agent", "vision"
+    # Desktop verbs are imperative — they always start the sentence and should
+    # outrank vision keywords that might co-occur ("click the close button on
+    # the focused window" → desktop, not vision).
+    if _DESKTOP_RE.match(t):
+        return "desktop_agent", "vision"
+    # Navigation intents ("open youtube in firefox", "go to github.com", etc.)
+    # share the verb 'open' with app-launch, but they're really desktop tasks.
+    if _DESKTOP_NAV_RE.match(t):
+        return "desktop_agent", "vision"
     if _APP_RE.match(t):
         return "app_agent", "fast"
+    if _VISION_RE.search(t):
+        return "vision_agent", "vision"
     return None
 
 
@@ -100,6 +134,7 @@ class Orchestrator:
         self.register(ChatAgent(), default=True)
         self.register(AppAgent())
         self.register(VisionAgent())
+        self.register(DesktopAgent())
 
     def register(self, agent: Agent, default: bool = False):
         self.agents[agent.name] = agent
@@ -190,6 +225,21 @@ class Orchestrator:
         """Pattern-match common 'open X' commands and run the tool synchronously.
         Returns (agent_name, reply) on success, else None to continue normal flow.
         """
+        # Navigation intents like "open youtube in firefox" / "open google.com" /
+        # "open the X website" are NOT app-launches — desktop_agent handles them.
+        if re.search(
+            r"\b(in|on|via|with|within|inside)\s+(firefox|chrome|chromium|browser|safari|edge|brave|opera)\b",
+            user_input,
+            re.IGNORECASE,
+        ):
+            return None
+        if re.search(
+            r"\b(website|webpage|web\s+page|site|url|tab|youtube|google\.com|github\.com|"
+            r"\.com\b|\.org\b|\.net\b|\.io\b|https?://)",
+            user_input,
+            re.IGNORECASE,
+        ):
+            return None
         m = _DIRECT_OPEN_RE.match(user_input.strip())
         if not m:
             return None

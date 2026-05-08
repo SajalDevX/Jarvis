@@ -58,6 +58,19 @@ JARVIS_WAKE_MODEL = os.environ.get("JARVIS_WAKE_MODEL", "hey_jarvis_v0.1")
 JARVIS_VOICE_LANG = os.environ.get("JARVIS_VOICE_LANG", "en")
 JARVIS_VAD_SILENCE_MS = int(os.environ.get("JARVIS_VAD_SILENCE_MS", "600"))
 
+# Desktop automation (Phase 5). Master switch is OFF by default; even when ON
+# the gate enforces allowlist + budget + destructive-keyword confirmation.
+JARVIS_ALLOW_AUTOMATION = os.environ.get("JARVIS_ALLOW_AUTOMATION", "false")
+JARVIS_AUTOMATION_DRY_RUN = os.environ.get("JARVIS_AUTOMATION_DRY_RUN", "false")
+JARVIS_AUTOMATION_ALLOWLIST = os.environ.get(
+    "JARVIS_AUTOMATION_ALLOWLIST",
+    "firefox,google-chrome,chromium,code,gnome-text-editor,gnome-terminal,kitty,alacritty,nautilus,postman",
+)
+JARVIS_ACTION_BUDGET = int(os.environ.get("JARVIS_ACTION_BUDGET", "30"))
+JARVIS_AUTOMATION_CONFIRM_PHRASE = os.environ.get(
+    "JARVIS_AUTOMATION_CONFIRM_PHRASE", "yes do it"
+)
+
 
 SYSTEM_PROMPT = (
     "You are Jarvis, a desktop assistant running on Linux. "

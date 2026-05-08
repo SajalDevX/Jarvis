@@ -14,12 +14,14 @@ from logger import log
 ROUTER_PROMPT = """You are an intent classifier. Output STRICT JSON only — no markdown, no explanation.
 
 Schema:
-{"agent": "app|vision|system|chat", "tier": "nano|fast|smart|power|vision"}
+{"agent": "app|vision|desktop|system|chat", "tier": "nano|fast|smart|power|vision"}
 
 Agents:
 - "app": open, close, launch, quit, list desktop applications
-- "vision": questions about the screen, screenshot, OCR, "what's shown", "is it loaded",
-  "what does it say", "what error", "describe my screen", "find the X button"
+- "vision": observe-only questions about the screen — screenshot, OCR, "what's shown",
+  "is it loaded", "what does it say", "describe my screen", "find the X button"
+- "desktop": ACT on the screen — click, type, paste, scroll, drag, press a key,
+  fill in a form, submit, close a tab, copy text, navigate a webpage
 - "system": shell command, system info, file ops
 - "chat": small talk, greetings, simple Q&A not requiring tools
 
@@ -75,6 +77,7 @@ class RouterAgent(Agent):
             "system": "app_agent",
             "chat": "chat_agent",
             "vision": "vision_agent",
+            "desktop": "desktop_agent",
         }
         agent_name = agent_map.get(agent, "app_agent")
 
@@ -82,8 +85,8 @@ class RouterAgent(Agent):
         if tier not in ("nano", "fast", "smart", "power", "vision"):
             tier = "fast"
 
-        # If routing to vision agent, force vision tier (multimodal needed)
-        if agent_name == "vision_agent":
+        # If routing to vision/desktop agent, force vision tier (multimodal needed)
+        if agent_name in ("vision_agent", "desktop_agent"):
             tier = "vision"
 
         log.info(f"Router classified: agent={agent_name} tier={tier}")

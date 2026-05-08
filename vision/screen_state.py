@@ -28,11 +28,22 @@ class ScreenState:
         self._describe_cache: dict[tuple[str, str], str] = {}  # (hash, question) → answer
 
     def capture(self, region: str = "active_window") -> dict:
-        """Capture and refresh state. Returns dict with path, hash, dimensions."""
+        """Capture and refresh state. Returns dict with path, hash, dimensions.
+
+        If active-window grab fails (X11 protocol race when target window
+        moves/closes mid-grab), fall back to full-screen so the agent loop
+        keeps running.
+        """
         if region == "full":
             path = capture_full_screen()
         else:
-            path = capture_active_window()
+            try:
+                path = capture_active_window()
+            except Exception as e:
+                # X11 protocol races are common when the active window moves
+                # mid-grab; full-screen always works. Demote to debug — recovered.
+                log.debug(f"active_window capture race ({e}); using full screen")
+                path = capture_full_screen()
 
         new_hash = _hash_file(path)
         if new_hash != self._hash:
